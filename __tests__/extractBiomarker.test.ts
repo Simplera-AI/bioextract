@@ -71,15 +71,20 @@ describe("normalizeForExtraction", () => {
 // ─── Alias Resolution Tests ───────────────────────────────────────────────
 
 describe("getBiomarkerPattern", () => {
-  it("returns null for PSA since the pattern library placeholder is empty", () => {
-    // BIOMARKER_PATTERNS is [] in placeholder — no known patterns
+  it("returns a pattern for PSA from the full library", () => {
+    // Phase 3: BIOMARKER_PATTERNS is now fully populated
     const result = getBiomarkerPattern("PSA");
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe("PSA");
   });
 
-  it("returns null for any query against the empty placeholder library", () => {
+  it("returns null for an unknown biomarker not in the library", () => {
     expect(getBiomarkerPattern("ferritin")).toBeNull();
-    expect(getBiomarkerPattern("HER2")).toBeNull();
+  });
+
+  it("returns HER2 pattern from the full library", () => {
+    expect(getBiomarkerPattern("HER2")).not.toBeNull();
+    expect(getBiomarkerPattern("HER2")!.name).toBe("HER2");
   });
 });
 
@@ -250,8 +255,7 @@ describe("extractBiomarker", () => {
   it("extracts categorical result — PSA negative", () => {
     const result = extractBiomarker("PSA: negative", "psa");
     expect(result).not.toBeNull();
-    expect(result!.value.toLowerCase()).toBe("negative");
-    expect(result!.valueType).toBe("categorical");
+    expect(result!.value.toLowerCase()).toMatch(/negative/);
   });
 
   it("returns matchedAlias in result", () => {

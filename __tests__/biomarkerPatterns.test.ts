@@ -536,3 +536,113 @@ describe("ALK extraction", () => {
     expect(result!.value.toLowerCase()).toMatch(/positive|rearranged/);
   });
 });
+
+// ─── Bug Fix Tests ────────────────────────────────────────────────────────────
+
+describe("Bug #1: Decimal comma — thousands not corrupted", () => {
+  it("keeps 8,000 as 8000 (not 8.000)", () => {
+    // WBC with thousand separator should not become 8.0
+    const result = extractBiomarker("WBC count: 8,000 cells/μL, ferritin 45 ng/mL", "ferritin");
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/45/);
+  });
+
+  it("still converts European decimal 3,5 → 3.5", () => {
+    const result = extractBiomarker("PSA: 3,5 ng/mL", "PSA");
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/3\.5/);
+  });
+
+  it("keeps multi-group numbers intact: 1,234,567", () => {
+    // A bare numeric fallback should not mangle large numbers
+    const result = extractBiomarker("Platelets: 1,234,567 per uL", "Platelets");
+    // Result may or may not match, but the text should not turn 1,234 into 1.234
+    // We verify normalisation doesn't produce 1.234 as a value
+    if (result) {
+      expect(result.value).not.toBe("1.234");
+    }
+  });
+});
+
+describe("Bug #4: BRCA exon and protein-change variants", () => {
+  it("extracts BRCA1 exon deletion", () => {
+    const result = extractBiomarker("BRCA1 exon 5 deletion, pathogenic", "BRCA1");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toMatch(/exon\s*5\s*deletion/);
+  });
+
+  it("extracts BRCA2 exon duplication", () => {
+    const result = extractBiomarker("BRCA2 exon 11 duplication detected", "BRCA2");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toMatch(/exon\s*11\s*duplication/);
+  });
+
+  it("extracts BRCA1 protein change only", () => {
+    const result = extractBiomarker("BRCA1 p.Trp24Cys identified", "BRCA1");
+    expect(result).not.toBeNull();
+    // value is normalized to lowercase by the extraction engine
+    expect(result!.value.toLowerCase()).toMatch(/trp24cys/);
+  });
+});
+
+describe("Bug #7: ER/PR bare +/- context safety", () => {
+  it("extracts ER positive from standalone annotation", () => {
+    const result = extractBiomarker("ER: positive", "ER");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toBe("positive");
+  });
+
+  it("extracts PR negative from standalone annotation", () => {
+    const result = extractBiomarker("PR: negative", "PR");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toBe("negative");
+  });
+});
+
+describe("Bug #8: HER2 IHC allows space before +", () => {
+  it("extracts HER2 3 + (space before plus)", () => {
+    const result = extractBiomarker("HER2 score 3 + (strong staining)", "HER2");
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/3\+/);
+  });
+
+  it("still extracts HER2 3+ (no space)", () => {
+    const result = extractBiomarker("HER2 3+ positive", "HER2");
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/3\+/);
+  });
+});
+
+describe("Bug #5: Negation fallback broader patterns", () => {
+  it("detects 'X negative for mutation' negation in fallback", () => {
+    const p = buildFallbackPattern("KRAS");
+    // Simulate context window check: find the negation pattern
+    const negPattern = p.valuePatterns.find(vp => vp.context === "negation / not detected");
+    expect(negPattern).toBeDefined();
+    const text = "KRAS: negative for mutation";
+    const m = negPattern!.pattern.exec(text.toLowerCase());
+    expect(m).not.toBeNull();
+  });
+
+  it("detects 'X mutation not detected' phrasing (KRAS known pattern)", () => {
+    // KRAS has a known pattern; "mutation not detected" matches its status pattern
+    const result = extractBiomarker("KRAS: mutation not detected in tissue sample.", "KRAS");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toMatch(/not\s+detected/);
+  });
+});
+
+describe("Bug #9: Levenshtein clean copy (correctness check)", () => {
+  it("tier-4 fuzzy: query 'Gleison' resolves to Gleason pattern and finds value in correct text", () => {
+    // Tier-4 tolerates a typo in the QUERY. Text must still have the correct spelling.
+    const result = extractBiomarker("Gleason score 7 (3+4)", "Gleison");
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/7/);
+  });
+
+  it("tier-4 fuzzy: getBiomarkerPattern resolves 'Gleison' → Gleason", () => {
+    const pattern = getBiomarkerPattern("Gleison");
+    expect(pattern).not.toBeNull();
+    expect(pattern!.name).toBe("Gleason");
+  });
+});

@@ -80,7 +80,7 @@ export function normalizeForExtraction(text: string): string {
     .replace(/[\u00a0\u2000-\u200b\u202f\u205f\u3000\t\r\n]/g, " ")  // Unicode whitespace → space
     .replace(/[\u2012\u2013\u2014\u2212]/g, "-")                       // dashes → hyphen
     .replace(/ {2,}/g, " ")                                             // collapse spaces
-    .replace(/(\d),(\d)/g, "$1.$2")                                    // decimal comma: 4,2 → 4.2
+    .replace(/(\d),(\d{1,2})(?!\d)/g, "$1.$2")                         // decimal comma: 4,2 → 4.2 (not 8,000 → 8.000)
     .replace(/[\u2070\u00b9\u00b2\u00b3\u2074-\u2079]/g, (c) => {     // superscript digits
       const map: Record<string, string> = {
         "\u00b9": "1", "\u00b2": "2", "\u00b3": "3",

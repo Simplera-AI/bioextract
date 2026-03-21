@@ -292,8 +292,8 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
         transform: (raw) => raw.trim(),
       },
       {
-        // "ER: positive", "ER negative", "ER+"
-        pattern: /\ber\b[\s:=]*(?:is|was|:)?\s*(positive|negative|equivocal|\+|-|pos\b|neg\b)/i,
+        // "ER: positive", "ER negative", "ER+" — bare +/- require word boundary after
+        pattern: /\ber\b[\s:=]*(?:is|was|:)?\s*(positive|negative|equivocal|pos\b|neg\b|(?<!\w)[+-](?!\w))/i,
         context: "ER status",
         valueType: "categorical",
         transform: (raw) => {
@@ -326,7 +326,8 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
         transform: (raw) => raw.trim(),
       },
       {
-        pattern: /\bpr\b[\s:=]*(?:is|was|:)?\s*(positive|negative|equivocal|\+|-|pos\b|neg\b)/i,
+        // bare +/- require word boundary after to prevent cross-field bleed
+        pattern: /\bpr\b[\s:=]*(?:is|was|:)?\s*(positive|negative|equivocal|pos\b|neg\b|(?<!\w)[+-](?!\w))/i,
         context: "PR status",
         valueType: "categorical",
         transform: (raw) => {
@@ -362,11 +363,11 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
     },
     valuePatterns: [
       {
-        // "HER2 3+" or "HER2 score 2+"
-        pattern: /her2[\s\S]{0,30}?([0-3]\+)/i,
+        // "HER2 3+" or "HER2 score 2+" or "HER2 3 +" (space before +)
+        pattern: /her2[\s\S]{0,30}?([0-3]\s*\+)/i,
         context: "HER2 IHC score 0/1+/2+/3+",
         valueType: "composite",
-        transform: (raw) => `HER2 ${raw.trim()}`,
+        transform: (raw) => `HER2 ${raw.trim().replace(/\s+\+$/, "+")}`,
       },
       {
         // "FISH ratio 2.3"
@@ -404,9 +405,23 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
     pendingPhrases: ["pending", "ordered", "sent out", "results pending"],
     valuePatterns: [
       {
-        // Specific variant: "BRCA1 c.5266dupC"
+        // Specific cDNA variant: "BRCA1 c.5266dupC (p.Gln1756fs)"
         pattern: /brca\s*1[\s\S]{0,30}?(c\.\d+[a-z>_\-]+(?:\s*\(p\.[a-z0-9*]+\))?)/i,
-        context: "BRCA1 specific variant",
+        context: "BRCA1 cDNA variant",
+        valueType: "composite",
+        transform: (raw) => raw.trim(),
+      },
+      {
+        // Protein-change-only: "BRCA1 p.Trp24Cys"
+        pattern: /brca\s*1[\s\S]{0,30}?(p\.[A-Z][a-z]{2}\d+[A-Z][a-z]{2,}|p\.[A-Z][a-z]{2}\d+\*|p\.[A-Z]\d+[A-Z])/i,
+        context: "BRCA1 protein change",
+        valueType: "composite",
+        transform: (raw) => raw.trim(),
+      },
+      {
+        // Exon structural variant: "BRCA1 exon 5 deletion", "BRCA1 exon 2-3 duplication"
+        pattern: /brca\s*1[\s\S]{0,40}?(exon\s+\d+(?:[-\u2013]\d+)?\s+(?:deletion|duplication|insertion|frameshift|inversion))/i,
+        context: "BRCA1 exon structural variant",
         valueType: "composite",
         transform: (raw) => raw.trim(),
       },
@@ -440,8 +455,23 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
     },
     valuePatterns: [
       {
+        // Specific cDNA variant: "BRCA2 c.5946delT"
         pattern: /brca\s*2[\s\S]{0,30}?(c\.\d+[a-z>_\-]+(?:\s*\(p\.[a-z0-9*]+\))?)/i,
-        context: "BRCA2 specific variant",
+        context: "BRCA2 cDNA variant",
+        valueType: "composite",
+        transform: (raw) => raw.trim(),
+      },
+      {
+        // Protein-change-only: "BRCA2 p.Trp24Cys"
+        pattern: /brca\s*2[\s\S]{0,30}?(p\.[A-Z][a-z]{2}\d+[A-Z][a-z]{2,}|p\.[A-Z][a-z]{2}\d+\*|p\.[A-Z]\d+[A-Z])/i,
+        context: "BRCA2 protein change",
+        valueType: "composite",
+        transform: (raw) => raw.trim(),
+      },
+      {
+        // Exon structural variant: "BRCA2 exon 11 deletion"
+        pattern: /brca\s*2[\s\S]{0,40}?(exon\s+\d+(?:[-\u2013]\d+)?\s+(?:deletion|duplication|insertion|frameshift|inversion))/i,
+        context: "BRCA2 exon structural variant",
         valueType: "composite",
         transform: (raw) => raw.trim(),
       },
@@ -833,7 +863,7 @@ function levenshtein(a: string, b: string): number {
         ? prev[j - 1]
         : 1 + Math.min(prev[j], curr[j - 1], prev[j - 1]);
     }
-    prev.splice(0, n + 1, ...curr);
+    for (let k = 0; k <= n; k++) prev[k] = curr[k];
   }
   return prev[n];
 }
@@ -896,7 +926,7 @@ export function getBiomarkerPattern(query: string): BiomarkerPattern | null {
       const ct = c.split(/[\s-]+/).filter(Boolean);
       if (ct.length !== qTokens.length) return false;
       return qTokens.every((qt, i) => {
-        const maxDist = qt.length >= 7 ? 2 : qt.length >= 4 ? 1 : 0;
+        const maxDist = qt.length >= 7 ? 2 : qt.length >= 4 ? 1 : qt.length >= 3 ? 1 : 0;
         return maxDist > 0 && levenshtein(qt, ct[i]) <= maxDist;
       });
     });
@@ -985,10 +1015,15 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
       },
       {
         // 3. Negation: "not detected", "negative for X", "wild-type", "no X identified"
-        // Negation pattern uses both exact escaped (for text that matches exactly) and
-        // flexEscaped (for text with full-form words when query was abbreviated).
+        // Also matches: "X: negative", "X negative for mutation", "X not identified"
         pattern: new RegExp(
-          "(not\\s+detected|negative\\s+for\\s+(?:" + escaped + "|" + flexEscaped + ")|no\\s+(?:" + escaped + "|" + flexEscaped + ")\\s+(?:identified|detected|found|seen)|wild[-\\s]?type|absent|no\\s+mutation\\s+(?:detected|identified|found))",
+          "(" +
+          "not\\s+detected|not\\s+identified|not\\s+found|not\\s+present|not\\s+seen|" +
+          "negative\\s+for\\s+(?:" + escaped + "|" + flexEscaped + "|mutation|amplification|expression)|" +
+          "(?:" + escaped + "|" + flexEscaped + ")\\s+(?:negative|not\\s+detected|not\\s+identified|not\\s+found)|" +
+          "no\\s+(?:" + escaped + "|" + flexEscaped + ")\\s+(?:identified|detected|found|seen|present)|" +
+          "wild[-\\s]?type|absent|no\\s+mutation\\s+(?:detected|identified|found)" +
+          ")",
           "i"
         ),
         context: "negation / not detected",

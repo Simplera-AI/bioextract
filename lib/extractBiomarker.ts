@@ -135,7 +135,7 @@ interface CandidateResult {
 
 /**
  * Check if the context window contains an implicit clinical phrase.
- * Implicit values are checked BEFORE regex valuePatterns.
+ * Implicit values are checked AFTER regex valuePatterns (fallback only).
  * Longest phrase match wins (to handle "within normal limits" over "normal").
  */
 function checkImplicitValues(
@@ -174,12 +174,16 @@ function extractValueFromWindow(
 
     const value = vp.transform ? vp.transform(rawValue) : rawValue;
 
-    // Determine confidence based on proximity of value to mention
+    // Determine confidence based on proximity of value to mention.
+    // When the alias isn't found literally in the window (e.g. aliasRegex matched a
+    // variant form), use the window centre as the reference point so distance is
+    // never artificially 0 or inflated.
     const matchStart = match.index ?? 0;
     const aliasIndexInWindow = contextWindow.indexOf(hit.alias);
-    const distanceFromMention = Math.abs(
-      matchStart - (aliasIndexInWindow >= 0 ? aliasIndexInWindow : 0)
-    );
+    const mentionRef = aliasIndexInWindow >= 0
+      ? aliasIndexInWindow
+      : Math.floor(contextWindow.length / 2);
+    const distanceFromMention = Math.abs(matchStart - mentionRef);
     const confidence: "high" | "medium" | "low" =
       distanceFromMention <= 30 ? "high" :
       distanceFromMention <= 80 ? "medium" : "low";
@@ -347,7 +351,7 @@ export function extractBiomarker(
     // Phase 3: Context window
     const contextWindow = extractContextWindow(normalized, hit, pattern.contextWindowChars);
 
-    // Phase 4: Value extraction (implicit values checked first)
+    // Phase 4: Value extraction (regex first, implicit values as fallback)
     const extracted = extractValueFromWindow(
       contextWindow,
       hit,

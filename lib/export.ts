@@ -30,6 +30,8 @@ function buildFilename(originalName: string, suffix: string, ext: string): strin
   return `${base}_${safeSuffix}_${ts}.${ext}`;
 }
 
+// ─── CSV Export ───────────────────────────────────────────────────────────
+
 export function exportCsv(
   headersOut: string[],
   rowsOut: Record<string, string>[],
@@ -47,7 +49,40 @@ export function exportCsv(
   triggerDownload(blob, filename);
 }
 
-// Stub — full implementation in Phase 5
+// ─── Cell style constants ─────────────────────────────────────────────────
+
+const HEADER_STYLE = {
+  font: { bold: true, color: { rgb: "FFFFFF" } },
+  fill: { patternType: "solid", fgColor: { rgb: "1F4E79" } }, // dark navy
+  alignment: { horizontal: "center" },
+};
+
+// Teal highlight for rows where a value was found
+const VALUE_FOUND_STYLE = {
+  fill: { patternType: "solid", fgColor: { rgb: "CCFBF1" } }, // teal-100
+  font: { bold: true, color: { rgb: "0F766E" } },             // teal-700
+};
+
+const EVIDENCE_FOUND_STYLE = {
+  fill: { patternType: "solid", fgColor: { rgb: "F0FDFA" } }, // teal-50
+  font: { italic: true, color: { rgb: "115E59" } },           // teal-800
+};
+
+const ROW_FOUND_STYLE = {
+  fill: { patternType: "solid", fgColor: { rgb: "F0FDFA" } }, // teal-50 for other cells
+};
+
+// ─── Excel Export ─────────────────────────────────────────────────────────
+
+/**
+ * Export biomarker extraction results as Excel (.xlsx).
+ *
+ * Styling:
+ * - Header row: dark navy background, white bold text
+ * - Rows where value was found: teal-50 row background
+ *   - Value column: teal-100 fill, bold teal text
+ *   - Evidence column: teal-50 fill, italic teal text
+ */
 export async function exportBiomarkerXlsx(
   headersOut: string[],
   rowsOut: Record<string, string>[],
@@ -55,7 +90,68 @@ export async function exportBiomarkerXlsx(
   suffix: string,
   biomarkerName: string
 ): Promise<void> {
-  // Temporary: fall back to CSV export until Phase 5 implements this
-  void biomarkerName;
-  exportCsv(headersOut, rowsOut, originalFileName, suffix);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const XLSX = (await import("xlsx-js-style")) as any;
+  const filename = buildFilename(originalFileName, suffix, "xlsx");
+
+  const valueCol = `${biomarkerName} Value`;
+  const evidenceCol = `${biomarkerName} Evidence`;
+  const valueColIdx = headersOut.indexOf(valueCol);
+  const evidenceColIdx = headersOut.indexOf(evidenceCol);
+
+  // Build array of arrays
+  const aoa: string[][] = [headersOut];
+  for (const row of rowsOut) {
+    aoa.push(headersOut.map((h) => row[h] ?? ""));
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Auto-column widths
+  const colWidths = headersOut.map((h) => {
+    const maxLen = Math.max(
+      h.length,
+      ...rowsOut.slice(0, 200).map((r) => (r[h] ?? "").length)
+    );
+    return { wch: Math.min(60, Math.max(10, maxLen)) };
+  });
+  ws["!cols"] = colWidths;
+
+  // Style header row
+  for (let c = 0; c < headersOut.length; c++) {
+    const ref = XLSX.utils.encode_cell({ r: 0, c });
+    if (ws[ref]) ws[ref].s = HEADER_STYLE;
+  }
+
+  // Style data rows
+  for (let r = 1; r <= rowsOut.length; r++) {
+    const row = rowsOut[r - 1];
+    const hasValue = valueColIdx >= 0 && !!(row[valueCol]?.trim());
+
+    if (hasValue) {
+      // Style all cells in this row with the base teal-50 background
+      for (let c = 0; c < headersOut.length; c++) {
+        const ref = XLSX.utils.encode_cell({ r, c });
+        if (!ws[ref]) {
+          ws[ref] = { v: "", t: "s" };
+        }
+        if (c === valueColIdx) {
+          ws[ref].s = VALUE_FOUND_STYLE;
+        } else if (c === evidenceColIdx) {
+          ws[ref].s = EVIDENCE_FOUND_STYLE;
+        } else {
+          ws[ref].s = ROW_FOUND_STYLE;
+        }
+      }
+    }
+  }
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "BioExtract");
+
+  const buf = XLSX.write(wb, { bookType: "xlsx", type: "array", cellStyles: true });
+  const blob = new Blob([buf], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  triggerDownload(blob, filename);
 }

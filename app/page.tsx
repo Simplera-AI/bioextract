@@ -191,9 +191,9 @@ export default function HomePage() {
 
       {/* Ambient background blobs */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
-        <div className="absolute -top-32 -left-32 h-96 w-96 rounded-full bg-teal-400/10 dark:bg-teal-500/5 blur-3xl" />
-        <div className="absolute top-1/2 -right-24 h-80 w-80 rounded-full bg-cyan-400/10 dark:bg-cyan-500/5 blur-3xl" />
-        <div className="absolute -bottom-24 left-1/3 h-64 w-64 rounded-full bg-teal-300/10 dark:bg-teal-600/5 blur-3xl" />
+        <div className="absolute -top-32 -left-32 h-96 w-96 rounded-full bg-teal-400/10 dark:bg-teal-500/5 blur-3xl animate-blob-float" />
+        <div className="absolute top-1/2 -right-24 h-80 w-80 rounded-full bg-cyan-400/10 dark:bg-cyan-500/5 blur-3xl animate-blob-float2" />
+        <div className="absolute -bottom-24 left-1/3 h-64 w-64 rounded-full bg-teal-300/10 dark:bg-teal-600/5 blur-3xl animate-blob-float3" />
       </div>
 
       {/* Header */}

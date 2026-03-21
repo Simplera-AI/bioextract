@@ -107,11 +107,20 @@ export function extractSnippet(
 
   // Scan forward from the end of the match for the next sentence-ending punctuation.
   // Include the punctuation character itself in the snippet.
+  // Skip "." that are part of decimal numbers (e.g. "4.2") to avoid mid-number splits.
   const matchEnd = Math.min(offset + matchLen, normalized.length);
   let sentEnd = normalized.length;
   for (let i = matchEnd; i < normalized.length; i++) {
     const ch = normalized[i];
-    if (ch === "." || ch === "!" || ch === "?") {
+    if (ch === "!" || ch === "?") {
+      sentEnd = i + 1;
+      break;
+    }
+    if (ch === ".") {
+      // Skip decimal points: digit before AND digit after
+      const prevIsDigit = i > 0 && normalized[i - 1] >= "0" && normalized[i - 1] <= "9";
+      const nextIsDigit = i + 1 < normalized.length && normalized[i + 1] >= "0" && normalized[i + 1] <= "9";
+      if (prevIsDigit && nextIsDigit) continue;
       sentEnd = i + 1;
       break;
     }

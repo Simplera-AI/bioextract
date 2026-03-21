@@ -474,6 +474,21 @@ describe("getBiomarkerPattern — tier-4 fuzzy edit-distance matching", () => {
     const p = getBiomarkerPattern("XYZ123");
     expect(p).toBeNull();
   });
+
+  it("'Progestrone Recptor' (2 separate 1-edit typos) resolves to PR pattern", () => {
+    // "progestrone" = edit distance 1 from "progesterone" (missing 'e' at pos 7)
+    // "recptor"     = edit distance 1 from "receptor"     (missing 'e' at pos 3)
+    const p = getBiomarkerPattern("Progestrone Recptor");
+    expect(p).not.toBeNull();
+    expect(p!.name).toBe("PR");
+  });
+
+  it("'Estrogan Receptor' (1 edit) resolves to ER pattern", () => {
+    // "estrogan" is 1 edit from "estrogen" (swap 'e'→'a' at pos 6)
+    const p = getBiomarkerPattern("Estrogan Receptor");
+    expect(p).not.toBeNull();
+    expect(p!.name).toBe("ER");
+  });
 });
 
 // ─── Additional Clinical Scenarios ───────────────────────────────────────────

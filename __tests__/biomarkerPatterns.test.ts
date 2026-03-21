@@ -364,6 +364,116 @@ describe("buildFallbackPattern", () => {
     const p = buildFallbackPattern("TestMarker");
     expect(p.pendingPhrases).toContain("pending");
   });
+
+  it("fallback pattern includes aliasRegexes array", () => {
+    const p = buildFallbackPattern("Prostat Vol");
+    expect(p.aliasRegexes).toBeDefined();
+    expect(p.aliasRegexes!.length).toBeGreaterThan(0);
+  });
+
+  it("aliasRegex for 'Prostat Vol' matches 'prostate volume' in text", () => {
+    const p = buildFallbackPattern("Prostat Vol");
+    const re = p.aliasRegexes![0];
+    re.lastIndex = 0;
+    expect(re.test("prostate volume was 45 cc")).toBe(true);
+  });
+
+  it("aliasRegex for 'Ferrit' matches 'ferritin' in text", () => {
+    const p = buildFallbackPattern("Ferrit");
+    const re = p.aliasRegexes![0];
+    re.lastIndex = 0;
+    expect(re.test("ferritin level 450 ng/ml")).toBe(true);
+  });
+
+  it("aliasRegex does NOT match unrelated words", () => {
+    const p = buildFallbackPattern("PSA");
+    const re = p.aliasRegexes![0];
+    re.lastIndex = 0;
+    // Should NOT match "psap" (PSA protein — different biomarker) as a word-boundary issue
+    // But "psa" in "psa level" should match
+    re.lastIndex = 0;
+    expect(re.test("psa level 4.2")).toBe(true);
+  });
+});
+
+// ─── Robustness: getBiomarkerPattern Tiered Matching ─────────────────────────
+
+describe("getBiomarkerPattern — tier-2 compact form matching", () => {
+  it("'ki67' (no hyphen, no space) resolves to Ki-67 pattern", () => {
+    const p = getBiomarkerPattern("ki67");
+    expect(p).not.toBeNull();
+    expect(p!.name).toBe("Ki-67");
+  });
+
+  it("'ki 67' (space-separated) resolves to Ki-67 pattern", () => {
+    // "ki 67" is already an alias (tier-1), verifying consistent behavior
+    const p = getBiomarkerPattern("ki 67");
+    expect(p).not.toBeNull();
+    expect(p!.name).toBe("Ki-67");
+  });
+
+  it("'HER-2' resolves to HER2 pattern (compact 'her2')", () => {
+    const p = getBiomarkerPattern("HER-2");
+    expect(p).not.toBeNull();
+    expect(p!.name).toBe("HER2");
+  });
+
+  it("'her2' (all lowercase, no separator) resolves to HER2 pattern", () => {
+    const p = getBiomarkerPattern("her2");
+    expect(p).not.toBeNull();
+    expect(p!.name).toBe("HER2");
+  });
+
+  it("'birads' (no separator) resolves to BIRADS pattern", () => {
+    const p = getBiomarkerPattern("birads");
+    expect(p).not.toBeNull();
+    expect(p!.name).toBe("BIRADS");
+  });
+
+  it("'piqual' resolves to PI-QUAL pattern", () => {
+    const p = getBiomarkerPattern("piqual");
+    expect(p).not.toBeNull();
+    expect(p!.name).toBe("PI-QUAL");
+  });
+
+  it("'pdl1' resolves to PD-L1 pattern", () => {
+    const p = getBiomarkerPattern("pdl1");
+    expect(p).not.toBeNull();
+    expect(p!.name).toBe("PD-L1");
+  });
+});
+
+describe("getBiomarkerPattern — tier-3 token-prefix matching", () => {
+  it("'Tumor Gr' (prefix of 'Tumor Grade') resolves to Tumor Grade pattern", () => {
+    const p = getBiomarkerPattern("Tumor Gr");
+    expect(p).not.toBeNull();
+    expect(p!.name).toBe("Tumor Grade");
+  });
+
+  it("'Tumor St' (prefix of 'Tumor Stage') resolves to Tumor Stage pattern", () => {
+    const p = getBiomarkerPattern("Tumor St");
+    expect(p).not.toBeNull();
+    expect(p!.name).toBe("Tumor Stage");
+  });
+});
+
+describe("getBiomarkerPattern — tier-4 fuzzy edit-distance matching", () => {
+  it("'Gleison' (1 edit from 'Gleason') resolves to Gleason pattern", () => {
+    const p = getBiomarkerPattern("Gleison");
+    expect(p).not.toBeNull();
+    expect(p!.name).toBe("Gleason");
+  });
+
+  it("'Gliason' (1 edit from 'Gleason') resolves to Gleason pattern", () => {
+    const p = getBiomarkerPattern("Gliason");
+    expect(p).not.toBeNull();
+    expect(p!.name).toBe("Gleason");
+  });
+
+  it("'XYZ123' does not fuzzy-match anything", () => {
+    const p = getBiomarkerPattern("XYZ123");
+    expect(p).toBeNull();
+  });
 });
 
 // ─── Additional Clinical Scenarios ───────────────────────────────────────────

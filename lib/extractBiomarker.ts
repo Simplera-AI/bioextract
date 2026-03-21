@@ -49,18 +49,35 @@ interface MentionHit {
 
 /**
  * Find all alias mentions in normalized text.
- * Aliases are tried longest-first to prefer more specific matches.
+ * Two passes:
+ *   1. String alias matching (exact, word-boundary-safe) — fast path
+ *   2. aliasRegexes matching — flex path for truncated or misspelled queries
+ *      e.g. the aliasRegex for "prostat vol" matches "prostate volume" in text
+ * Results are merged, sorted, and deduplicated.
  */
 function findMentions(normalizedText: string, pattern: BiomarkerPattern): MentionHit[] {
   const hits: MentionHit[] = [];
-  // Aliases are pre-sorted longest-first in the pattern library
+
+  // Pass 1: exact string aliases (longest-first ordering in pattern library)
   for (const alias of pattern.aliases) {
     const found = findAllMentions(normalizedText, alias);
     for (const f of found) {
       hits.push({ alias, offset: f.offset, length: alias.length });
     }
   }
-  // Sort by offset ascending, deduplicate overlapping hits
+
+  // Pass 2: flexible regex aliases (for fuzzy/fallback patterns)
+  if (pattern.aliasRegexes) {
+    for (const re of pattern.aliasRegexes) {
+      re.lastIndex = 0; // reset stateful global regex before each use
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(normalizedText)) !== null) {
+        hits.push({ alias: m[0], offset: m.index, length: m[0].length });
+      }
+    }
+  }
+
+  // Sort by offset ascending, deduplicate overlapping hits (keep first/longer match)
   hits.sort((a, b) => a.offset - b.offset);
   const deduped: MentionHit[] = [];
   let lastEnd = -1;

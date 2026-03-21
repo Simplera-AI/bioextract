@@ -24,6 +24,13 @@ export interface ValueCapturePattern {
 export interface BiomarkerPattern {
   name: string;
   aliases: string[];
+  /**
+   * Flexible regex patterns for finding mentions in clinical text.
+   * Used in addition to string alias matching — handles truncated/misspelled
+   * user queries. e.g. "prostat vol" generates a regex matching "prostate volume".
+   * Stateful (global flag) — always reset .lastIndex before use.
+   */
+  aliasRegexes?: RegExp[];
   valuePatterns: ValueCapturePattern[];
   contextWindowChars: number;
   tieBreaking: TieBreakingStrategy;
@@ -31,7 +38,7 @@ export interface BiomarkerPattern {
   pendingPhrases: string[];
   /**
    * Map of implicit clinical phrases → extracted value.
-   * Checked BEFORE valuePatterns in Phase 4.
+   * Checked AFTER valuePatterns in Phase 4 (regex first, implicit fallback).
    * e.g. { "undetectable": "< 0.1 ng/mL", "normal": "< 4.0 ng/mL" }
    */
   implicitValues?: Record<string, string>;
@@ -810,8 +817,42 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
 // ─── Pattern Lookup & Fallback ────────────────────────────────────────────
 
 /**
- * Look up a biomarker pattern by name or alias (case-insensitive).
- * Returns null if not found — caller should use buildFallbackPattern().
+ * Compute Levenshtein edit distance between two strings.
+ * Used for tier-4 fuzzy query matching (e.g. "Gleison" → "Gleason").
+ */
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const prev = Array.from({ length: n + 1 }, (_, i) => i);
+  const curr = new Array<number>(n + 1);
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      curr[j] = a[i - 1] === b[j - 1]
+        ? prev[j - 1]
+        : 1 + Math.min(prev[j], curr[j - 1], prev[j - 1]);
+    }
+    prev.splice(0, n + 1, ...curr);
+  }
+  return prev[n];
+}
+
+/**
+ * Look up a biomarker pattern by name or alias.
+ * Uses four tiers of matching so users can type "ki67", "HER-2", "Gleison", etc.
+ *
+ * Tier 1 — Exact: "PSA", "gleason score" (current behaviour)
+ * Tier 2 — Compact (strip all hyphens/spaces): "ki67" = "ki-67", "birads" = "bi-rads"
+ * Tier 3 — Per-token prefix: each query token is a prefix of the alias token at the
+ *           same position, same token count.
+ *           "prostat vol" → ["prostat","vol"] prefix-matches ["prostate","volume"] ← if known
+ *           "tumor gr"    → ["tumor","gr"]    prefix-matches ["tumor","grade"]
+ * Tier 4 — Per-token fuzzy (Levenshtein): handles single-char typos.
+ *           "Gleison" → distance 1 from "Gleason" ✓
+ *           Tolerance: 0 for <4-char tokens, 1 for 4–6 chars, 2 for 7+ chars
+ *
+ * Returns null only when nothing matches — caller should use buildFallbackPattern().
  */
 export function getBiomarkerPattern(query: string): BiomarkerPattern | null {
   const normalized = query.toLowerCase().trim()
@@ -819,15 +860,65 @@ export function getBiomarkerPattern(query: string): BiomarkerPattern | null {
     .replace(/[\u00a0\u2000-\u200b\u202f\u205f\u3000\t]/g, " ")
     .replace(/ {2,}/g, " ");
 
-  return BIOMARKER_PATTERNS.find(
-    (p) =>
-      p.name.toLowerCase() === normalized ||
-      p.aliases.some((a) => a === normalized)
-  ) ?? null;
+  // Tier 1: exact match (name or alias)
+  const tier1 = BIOMARKER_PATTERNS.find(
+    (p) => p.name.toLowerCase() === normalized || p.aliases.some((a) => a === normalized)
+  );
+  if (tier1) return tier1;
+
+  // Tier 2: compact form — strip ALL hyphens and spaces
+  // Handles: "HER-2"="HER2"="HER 2", "ki67"="ki-67"="ki 67", "birads"="bi-rads"
+  const compact = normalized.replace(/[-\s]/g, "");
+  const tier2 = BIOMARKER_PATTERNS.find((p) => {
+    const nc = p.name.toLowerCase().replace(/[-\s]/g, "");
+    return nc === compact || p.aliases.some((a) => a.replace(/[-\s]/g, "") === compact);
+  });
+  if (tier2) return tier2;
+
+  // Tier 3: per-token prefix match
+  // "tumor gr" → ["tumor","gr"] prefix-matches ["tumor","grade"]
+  // "pi qual"  → ["pi","qual"]  prefix-matches ["pi","qual"] (exact alias check already ran)
+  const qTokens = normalized.split(/[\s-]+/).filter(Boolean);
+  const tier3 = BIOMARKER_PATTERNS.find((p) => {
+    const candidates = [p.name.toLowerCase(), ...p.aliases];
+    return candidates.some((c) => {
+      const ct = c.split(/[\s-]+/).filter(Boolean);
+      if (ct.length !== qTokens.length) return false;
+      return qTokens.every((qt, i) => ct[i].startsWith(qt));
+    });
+  });
+  if (tier3) return tier3;
+
+  // Tier 4: per-token fuzzy edit-distance — "Gleison"→"Gleason", "prostat vol"→"prostate volume" (if known)
+  const tier4 = BIOMARKER_PATTERNS.find((p) => {
+    const candidates = [p.name.toLowerCase(), ...p.aliases];
+    return candidates.some((c) => {
+      const ct = c.split(/[\s-]+/).filter(Boolean);
+      if (ct.length !== qTokens.length) return false;
+      return qTokens.every((qt, i) => {
+        const maxDist = qt.length >= 7 ? 2 : qt.length >= 4 ? 1 : 0;
+        return maxDist > 0 && levenshtein(qt, ct[i]) <= maxDist;
+      });
+    });
+  });
+  if (tier4) return tier4;
+
+  return null;
 }
 
 /**
  * Build a dynamic fallback pattern for an unknown biomarker.
+ *
+ * Robustness features:
+ *   - aliases:      exact lowercased query (for exact text matches)
+ *   - aliasRegexes: token-prefix flex regex so "prostat vol" matches "prostate volume"
+ *                   Each token is escaped then extended with \w* so truncated/abbreviated
+ *                   tokens match their full-word form in clinical text.
+ *                   e.g. "prostat vol" → /(?<![a-z0-9])prostat\w*[\s-]+vol\w*(?![a-z0-9])/gi
+ *
+ * Value patterns use the same flexible token regex so they still match when
+ * the alias regex (not the exact string) found the mention.
+ *
  * Generates 6 general-purpose patterns tried in order:
  *   1. Comparison / threshold  (< 0.1, > 4.0, less than X)
  *   2. Ratio / fraction        (3/10 cores)
@@ -841,17 +932,34 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
   const escaped = nameLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const units = "ng\\/ml|ng\\/dl|ug\\/l|%|u\\/l|iu\\/l|g\\/dl|mmol\\/l|pmol\\/l|mm|cm|miu\\/l|copies\\/ml";
 
+  // Build token-prefix flexible escaped string.
+  // Each query token is escaped + \w* so abbreviated/truncated tokens match full words.
+  // e.g. "prostat vol" → "prostat\\w*[\\s-]+vol\\w*"
+  // e.g. "ferritin"    → "ferritin\\w*"
+  const queryTokens = nameLower.split(/[\s-]+/).filter(Boolean);
+  const flexEscaped = queryTokens
+    .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\w*")
+    .join("[\\s-]+");
+
+  // Flexible mention-finding regex for clinical text (stateful — reset .lastIndex before use)
+  const aliasRegex = new RegExp(
+    "(?<![a-z0-9])" + flexEscaped + "(?![a-z0-9])",
+    "gi"
+  );
+
   return {
     name: biomarkerName,
     aliases: [nameLower],
+    aliasRegexes: [aliasRegex],
     tieBreaking: "first",
     contextWindowChars: 200,
     pendingPhrases: ["pending", "not done", "not performed", "ordered", "not available", "to follow"],
     valuePatterns: [
       {
         // 1. Comparison: "< 0.1 ng/mL", "> 4.0", "less than 5", "greater than 10"
+        // Uses flexEscaped so "prostat vol" pattern still fires on "prostate volume: ..." context
         pattern: new RegExp(
-          escaped + "[\\s\\S]{0,50}?((?:less\\s+than|below|under|<\\s*)\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?|(?:greater\\s+than|above|over|>\\s*)\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
+          flexEscaped + "[\\s\\S]{0,50}?((?:less\\s+than|below|under|<\\s*)\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?|(?:greater\\s+than|above|over|>\\s*)\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
           "i"
         ),
         context: "comparison threshold",
@@ -868,7 +976,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
       {
         // 2. Ratio / fraction: "3/10 cores", "2 of 12"
         pattern: new RegExp(
-          escaped + "[\\s\\S]{0,50}?(\\d+\\s*\\/\\s*\\d+(?:\\s+(?:cores|cells|fields|samples|specimens|lymph\\s+nodes))?)",
+          flexEscaped + "[\\s\\S]{0,50}?(\\d+\\s*\\/\\s*\\d+(?:\\s+(?:cores|cells|fields|samples|specimens|lymph\\s+nodes))?)",
           "i"
         ),
         context: "ratio or fraction",
@@ -877,8 +985,10 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
       },
       {
         // 3. Negation: "not detected", "negative for X", "wild-type", "no X identified"
+        // Negation pattern uses both exact escaped (for text that matches exactly) and
+        // flexEscaped (for text with full-form words when query was abbreviated).
         pattern: new RegExp(
-          "(not\\s+detected|negative\\s+for\\s+" + escaped + "|no\\s+" + escaped + "\\s+(?:identified|detected|found|seen)|wild[-\\s]?type|absent|no\\s+mutation\\s+(?:detected|identified|found))",
+          "(not\\s+detected|negative\\s+for\\s+(?:" + escaped + "|" + flexEscaped + ")|no\\s+(?:" + escaped + "|" + flexEscaped + ")\\s+(?:identified|detected|found|seen)|wild[-\\s]?type|absent|no\\s+mutation\\s+(?:detected|identified|found))",
           "i"
         ),
         context: "negation / not detected",
@@ -888,7 +998,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
       {
         // 4. Numeric + unit
         pattern: new RegExp(
-          escaped + "[\\s\\S]{0,60}?(\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
+          flexEscaped + "[\\s\\S]{0,60}?(\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
           "i"
         ),
         context: "numeric value with optional unit",
@@ -898,7 +1008,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
       {
         // 5. Categorical status
         pattern: new RegExp(
-          escaped + "[\\s\\S]{0,50}?(positive|negative|detected|not\\s+detected|mutated|wild[-\\s]?type|amplified|not\\s+amplified|high|low|equivocal|absent|present|elevated|normal)",
+          flexEscaped + "[\\s\\S]{0,50}?(positive|negative|detected|not\\s+detected|mutated|wild[-\\s]?type|amplified|not\\s+amplified|high|low|equivocal|absent|present|elevated|normal)",
           "i"
         ),
         context: "categorical status",
@@ -908,7 +1018,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
       {
         // 6. Bare numeric (last resort)
         pattern: new RegExp(
-          escaped + "[\\s:=]*(?:of|is|was|at|level|score|value|result|measured|:)?\\s*:?\\s*(\\d+(?:\\.\\d+)?)",
+          flexEscaped + "[\\s:=]*(?:of|is|was|at|level|score|value|result|measured|:)?\\s*:?\\s*(\\d+(?:\\.\\d+)?)",
           "i"
         ),
         context: "bare numeric",

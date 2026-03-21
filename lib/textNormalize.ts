@@ -89,7 +89,12 @@ export function normalizeForExtraction(text: string): string {
       };
       return map[c] ?? c;
     })
-    .toLowerCase();
+    .toLowerCase()
+    // "twenty percent" → "twenty %" so convertWordNumbers can recognise the unit
+    .replace(/\bpercent(?:age)?\b/g, "%")
+    // "mg/dl", "mg/l" → recognise unit variants
+    .replace(/\bmg\/dl\b/g, "mg/dl")
+    .replace(/\bcells\/ul\b/g, "cells/ul");
 
   return convertWordNumbers(step1);
 }

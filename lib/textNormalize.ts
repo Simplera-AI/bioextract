@@ -3,6 +3,68 @@
  * Extends ClinDetect's normaliseText with clinical-specific fixes.
  */
 
+// ─── Word-to-Number Conversion ───────────────────────────────────────────────
+
+const ONES = [
+  "zero","one","two","three","four","five","six","seven","eight","nine",
+  "ten","eleven","twelve","thirteen","fourteen","fifteen","sixteen",
+  "seventeen","eighteen","nineteen",
+];
+const TENS = ["","","twenty","thirty","forty","fifty","sixty","seventy","eighty","ninety"];
+
+function wordToNum(word: string): number | null {
+  const oi = ONES.indexOf(word);
+  if (oi >= 0) return oi;
+  const ti = TENS.indexOf(word);
+  if (ti >= 0) return ti * 10;
+  return null;
+}
+
+/**
+ * Convert English word-form numbers in clinical text to digits.
+ * Handles three patterns:
+ *   1. "X point Y"   → X.Y   (e.g. "four point two" → "4.2")
+ *   2. "forty-two"   → 42    (tens + ones compound)
+ *   3. word number adjacent to a unit → digit
+ *      (e.g. "five ng/mL" → "5 ng/mL")
+ *
+ * Operates on already-lowercased text.
+ */
+export function convertWordNumbers(text: string): string {
+  const onesPattern = ONES.join("|");
+  const tensPattern = TENS.filter(Boolean).join("|");
+  const allWords    = [...ONES, ...TENS.filter(Boolean)].join("|");
+
+  // 1. "four point two" → "4.2"
+  text = text.replace(
+    new RegExp(`\\b(${allWords})\\s+point\\s+(${allWords})\\b`, "g"),
+    (_, intWord: string, fracWord: string) => {
+      const i = wordToNum(intWord);
+      const f = wordToNum(fracWord);
+      return i !== null && f !== null ? `${i}.${f}` : _;
+    }
+  );
+
+  // 2. "forty-two" / "forty two" → 42
+  text = text.replace(
+    new RegExp(`\\b(${tensPattern})[\\s-](${onesPattern})\\b`, "g"),
+    (_, tens: string, ones: string) => {
+      const t = wordToNum(tens);
+      const o = wordToNum(ones);
+      return t !== null && o !== null ? String(t + o) : _;
+    }
+  );
+
+  // 3. Standalone word number followed by a clinical unit
+  const unitSuffix = "(?=\\s*(?:ng\\/ml|ng\\/dl|ug\\/l|%|u\\/l|iu\\/l|g\\/dl|mmol\\/l|pmol\\/l|mm|cm|miu\\/l|copies\\/ml))";
+  text = text.replace(
+    new RegExp(`\\b(${allWords})\\b${unitSuffix}`, "g"),
+    (match: string) => { const n = wordToNum(match); return n !== null ? String(n) : match; }
+  );
+
+  return text;
+}
+
 /**
  * Normalize clinical text for biomarker matching:
  * 1. Collapse Unicode whitespace variants (non-breaking space, em-space, thin-space, tabs) → regular space
@@ -10,10 +72,11 @@
  * 3. Collapse runs of spaces → single space
  * 4. Normalize decimal commas: "4,2" → "4.2" (European locale EMR exports)
  * 5. Normalize Unicode superscript/subscript digits → ASCII (from PDF copy-paste)
- * 6. Lowercase
+ * 6. Convert word-form numbers → digits
+ * 7. Lowercase
  */
 export function normalizeForExtraction(text: string): string {
-  return text
+  const step1 = text
     .replace(/[\u00a0\u2000-\u200b\u202f\u205f\u3000\t\r\n]/g, " ")  // Unicode whitespace → space
     .replace(/[\u2012\u2013\u2014\u2212]/g, "-")                       // dashes → hyphen
     .replace(/ {2,}/g, " ")                                             // collapse spaces
@@ -27,6 +90,8 @@ export function normalizeForExtraction(text: string): string {
       return map[c] ?? c;
     })
     .toLowerCase();
+
+  return convertWordNumbers(step1);
 }
 
 /**

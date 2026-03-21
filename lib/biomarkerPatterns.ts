@@ -12,7 +12,7 @@
 
 import type { BiomarkerValueType } from "./types";
 
-export type TieBreakingStrategy = "first" | "last" | "highest" | "lowest" | "all";
+export type TieBreakingStrategy = "first" | "last" | "highest" | "lowest" | "all" | "contextual";
 
 export interface ValueCapturePattern {
   pattern: RegExp;
@@ -29,6 +29,12 @@ export interface BiomarkerPattern {
   tieBreaking: TieBreakingStrategy;
   comparisonStrategy?: "latest" | "both";
   pendingPhrases: string[];
+  /**
+   * Map of implicit clinical phrases → extracted value.
+   * Checked BEFORE valuePatterns in Phase 4.
+   * e.g. { "undetectable": "< 0.1 ng/mL", "normal": "< 4.0 ng/mL" }
+   */
+  implicitValues?: Record<string, string>;
 }
 
 // ─── Pattern Library ──────────────────────────────────────────────────────
@@ -51,6 +57,19 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
     comparisonStrategy: "both",
     contextWindowChars: 250,
     pendingPhrases: ["pending", "ordered", "not available", "not done", "to follow", "awaited"],
+    implicitValues: {
+      "undetectable":           "< 0.1 ng/mL",
+      "undetected":             "< 0.1 ng/mL",
+      "below detection":        "< 0.1 ng/mL",
+      "below the limit":        "< 0.1 ng/mL",
+      "suppressed":             "< 0.1 ng/mL",
+      "within normal limits":   "< 4.0 ng/mL",
+      "within normal range":    "< 4.0 ng/mL",
+      "normal":                 "< 4.0 ng/mL",
+      "elevated":               "> 4.0 ng/mL",
+      "high":                   "> 4.0 ng/mL",
+      "significantly elevated": "> 10.0 ng/mL",
+    },
     valuePatterns: [
       {
         // "PSA decreased from 8.4 to 0.2 ng/mL"
@@ -207,6 +226,14 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
     tieBreaking: "highest",
     contextWindowChars: 200,
     pendingPhrases: ["not available", "not performed", "pending"],
+    implicitValues: {
+      "low":          "< 14%",
+      "low grade":    "< 14%",
+      "intermediate": "14-30%",
+      "high":         "> 30%",
+      "high grade":   "> 30%",
+      "elevated":     "> 30%",
+    },
     valuePatterns: [
       {
         // "Ki-67 15-25%"
@@ -244,6 +271,11 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
     tieBreaking: "first",
     contextWindowChars: 200,
     pendingPhrases: ["not done", "not performed", "pending"],
+    implicitValues: {
+      "strongly positive": "Positive (strong)",
+      "weakly positive":   "Positive (weak)",
+      "focally positive":  "Positive (focal)",
+    },
     valuePatterns: [
       {
         // "ER: 90%, score 6/8 (Allred)"
@@ -315,6 +347,12 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
     tieBreaking: "first",
     contextWindowChars: 250,
     pendingPhrases: ["fish pending", "not performed", "pending"],
+    implicitValues: {
+      "overexpressed":     "Positive (overexpressed)",
+      "not overexpressed": "Negative",
+      "amplified":         "Positive (amplified)",
+      "not amplified":     "Negative (not amplified)",
+    },
     valuePatterns: [
       {
         // "HER2 3+" or "HER2 score 2+"
@@ -387,6 +425,12 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
     tieBreaking: "first",
     contextWindowChars: 250,
     pendingPhrases: ["pending", "ordered", "sent out", "results pending"],
+    implicitValues: {
+      "wild type":    "Not detected",
+      "wild-type":    "Not detected",
+      "germline":     "Germline mutation detected",
+      "no mutation":  "Not detected",
+    },
     valuePatterns: [
       {
         pattern: /brca\s*2[\s\S]{0,30}?(c\.\d+[a-z>_\-]+(?:\s*\(p\.[a-z0-9*]+\))?)/i,
@@ -423,6 +467,13 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
     tieBreaking: "first",
     contextWindowChars: 200,
     pendingPhrases: ["not performed", "not tested", "pending"],
+    implicitValues: {
+      "intact":          "pMMR (proficient)",
+      "proficient":      "pMMR (proficient)",
+      "deficient":       "dMMR (deficient)",
+      "unstable":        "MSI-H",
+      "stable":          "MSS",
+    },
     valuePatterns: [
       {
         // "MSI-H", "MSI-L", "MSI high", "MSI unstable"
@@ -482,6 +533,12 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
     tieBreaking: "highest",
     contextWindowChars: 250,
     pendingPhrases: ["not performed", "not tested", "pending"],
+    implicitValues: {
+      "no expression":  "TPS 0%",
+      "absent":         "TPS 0%",
+      "high":           "> 50% TPS",
+      "low":            "1-49% TPS",
+    },
     valuePatterns: [
       {
         // "TPS 50%", "PD-L1 TPS: 1%"
@@ -771,11 +828,18 @@ export function getBiomarkerPattern(query: string): BiomarkerPattern | null {
 
 /**
  * Build a dynamic fallback pattern for an unknown biomarker.
- * Generates 3 general-purpose patterns: numeric+unit, categorical, bare numeric.
+ * Generates 6 general-purpose patterns tried in order:
+ *   1. Comparison / threshold  (< 0.1, > 4.0, less than X)
+ *   2. Ratio / fraction        (3/10 cores)
+ *   3. Negation detection      (not detected, negative for X, wild-type)
+ *   4. Numeric + unit          (4.2 ng/mL)
+ *   5. Categorical status      (positive, negative, detected…)
+ *   6. Bare numeric            (last resort)
  */
 export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
   const nameLower = biomarkerName.toLowerCase().trim();
   const escaped = nameLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const units = "ng\\/ml|ng\\/dl|ug\\/l|%|u\\/l|iu\\/l|g\\/dl|mmol\\/l|pmol\\/l|mm|cm|miu\\/l|copies\\/ml";
 
   return {
     name: biomarkerName,
@@ -785,8 +849,46 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
     pendingPhrases: ["pending", "not done", "not performed", "ordered", "not available", "to follow"],
     valuePatterns: [
       {
+        // 1. Comparison: "< 0.1 ng/mL", "> 4.0", "less than 5", "greater than 10"
         pattern: new RegExp(
-          escaped + "[\\s\\S]{0,60}?(\\d+(?:\\.\\d+)?\\s*(?:ng\\/ml|ng\\/dl|%|u\\/l|mm|cm|miu\\/l|copies\\/ml|iu\\/l|g\\/dl|mmol\\/l|pmol\\/l)?)",
+          escaped + "[\\s\\S]{0,50}?((?:less\\s+than|below|under|<\\s*)\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?|(?:greater\\s+than|above|over|>\\s*)\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
+          "i"
+        ),
+        context: "comparison threshold",
+        valueType: "comparison",
+        transform: (raw) => {
+          const r = raw.trim().toLowerCase();
+          const ltMatch = /^(?:less\s+than|below|under)\s*(.+)/.exec(r);
+          const gtMatch = /^(?:greater\s+than|above|over)\s*(.+)/.exec(r);
+          if (ltMatch) return `< ${ltMatch[1].trim()}`;
+          if (gtMatch) return `> ${gtMatch[1].trim()}`;
+          return raw.trim();
+        },
+      },
+      {
+        // 2. Ratio / fraction: "3/10 cores", "2 of 12"
+        pattern: new RegExp(
+          escaped + "[\\s\\S]{0,50}?(\\d+\\s*\\/\\s*\\d+(?:\\s+(?:cores|cells|fields|samples|specimens|lymph\\s+nodes))?)",
+          "i"
+        ),
+        context: "ratio or fraction",
+        valueType: "composite",
+        transform: (raw) => raw.trim(),
+      },
+      {
+        // 3. Negation: "not detected", "negative for X", "wild-type", "no X identified"
+        pattern: new RegExp(
+          "(not\\s+detected|negative\\s+for\\s+" + escaped + "|no\\s+" + escaped + "\\s+(?:identified|detected|found|seen)|wild[-\\s]?type|absent|no\\s+mutation\\s+(?:detected|identified|found))",
+          "i"
+        ),
+        context: "negation / not detected",
+        valueType: "categorical",
+        transform: () => "Not detected",
+      },
+      {
+        // 4. Numeric + unit
+        pattern: new RegExp(
+          escaped + "[\\s\\S]{0,60}?(\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
           "i"
         ),
         context: "numeric value with optional unit",
@@ -794,8 +896,9 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
         transform: (raw) => raw.trim(),
       },
       {
+        // 5. Categorical status
         pattern: new RegExp(
-          escaped + "[\\s\\S]{0,50}?(positive|negative|detected|not\\s+detected|mutated|wild[-\\s]?type|amplified|not\\s+amplified|high|low|equivocal|absent|present)",
+          escaped + "[\\s\\S]{0,50}?(positive|negative|detected|not\\s+detected|mutated|wild[-\\s]?type|amplified|not\\s+amplified|high|low|equivocal|absent|present|elevated|normal)",
           "i"
         ),
         context: "categorical status",
@@ -803,6 +906,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
         transform: (raw) => raw.trim(),
       },
       {
+        // 6. Bare numeric (last resort)
         pattern: new RegExp(
           escaped + "[\\s:=]*(?:of|is|was|at|level|score|value|result|measured|:)?\\s*:?\\s*(\\d+(?:\\.\\d+)?)",
           "i"

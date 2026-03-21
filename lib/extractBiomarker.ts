@@ -117,14 +117,36 @@ interface CandidateResult {
 }
 
 /**
+ * Check if the context window contains an implicit clinical phrase.
+ * Implicit values are checked BEFORE regex valuePatterns.
+ * Longest phrase match wins (to handle "within normal limits" over "normal").
+ */
+function checkImplicitValues(
+  contextWindow: string,
+  implicitValues: Record<string, string>
+): { value: string; valueType: BiomarkerValueType } | null {
+  // Sort by phrase length descending so longer, more-specific phrases match first
+  const phrases = Object.keys(implicitValues).sort((a, b) => b.length - a.length);
+  for (const phrase of phrases) {
+    if (contextWindow.includes(phrase.toLowerCase())) {
+      return { value: implicitValues[phrase], valueType: "categorical" };
+    }
+  }
+  return null;
+}
+
+/**
  * Try to extract a value from the context window using ordered patterns.
- * Returns the first successful match.
+ * Tries regex valuePatterns FIRST. Falls back to implicitValues only when
+ * no regex pattern matched — ensures "PSA 8.4 (elevated)" extracts "8.4",
+ * not the implicit "> 4.0 ng/mL".
  */
 function extractValueFromWindow(
   contextWindow: string,
   hit: MentionHit,
   valuePatterns: ValueCapturePattern[],
-  _originalText: string
+  _originalText: string,
+  implicitValues?: Record<string, string>
 ): { value: string; valueType: BiomarkerValueType; confidence: "high" | "medium" | "low" } | null {
   for (const vp of valuePatterns) {
     const match = vp.pattern.exec(contextWindow);
@@ -147,6 +169,13 @@ function extractValueFromWindow(
 
     return { value, valueType: vp.valueType, confidence };
   }
+
+  // Implicit value fallback — only fires when no regex pattern matched
+  if (implicitValues) {
+    const implicit = checkImplicitValues(contextWindow, implicitValues);
+    if (implicit) return { ...implicit, confidence: "medium" };
+  }
+
   return null;
 }
 
@@ -161,12 +190,45 @@ function parseNumericForTieBreaking(value: string): number | null {
 
 // ─── Phase 5: Tie-Breaking ───────────────────────────────────────────────
 
+// Keywords indicating a clinically significant mention (higher score = prefer this mention)
+const CONTEXTUAL_KEYWORDS: Array<{ phrase: string; score: number }> = [
+  { phrase: "most recent",   score: 10 },
+  { phrase: "most current",  score: 10 },
+  { phrase: "latest",        score: 9  },
+  { phrase: "current",       score: 8  },
+  { phrase: "today",         score: 8  },
+  { phrase: "post-treatment",score: 7  },
+  { phrase: "post treatment",score: 7  },
+  { phrase: "nadir",         score: 7  },
+  { phrase: "peak",          score: 6  },
+  { phrase: "highest",       score: 6  },
+  { phrase: "initial",       score: 5  },
+  { phrase: "baseline",      score: 5  },
+  { phrase: "pre-treatment", score: 4  },
+  { phrase: "pre treatment", score: 4  },
+  { phrase: "at diagnosis",  score: 3  },
+];
+
+/**
+ * Score a candidate by scanning 60 chars BEFORE the mention for contextual keywords.
+ */
+function contextualScore(normalizedText: string, candidate: CandidateResult): number {
+  const windowStart = Math.max(0, candidate.offset - 60);
+  const window = normalizedText.slice(windowStart, candidate.offset);
+  let score = 0;
+  for (const kw of CONTEXTUAL_KEYWORDS) {
+    if (window.includes(kw.phrase)) score += kw.score;
+  }
+  return score;
+}
+
 /**
  * Select the best candidate from multiple mentions using the pattern's strategy.
  */
 function applyTieBreaking(
   candidates: CandidateResult[],
-  strategy: BiomarkerPattern["tieBreaking"]
+  strategy: BiomarkerPattern["tieBreaking"],
+  normalizedText: string
 ): CandidateResult {
   if (candidates.length === 1) return candidates[0];
 
@@ -206,6 +268,17 @@ function applyTieBreaking(
         evidence: allEvidence,
         valueType: "composite",
       };
+    }
+
+    case "contextual": {
+      // Score each candidate by proximity to contextual keywords; fall back to "first"
+      let best = candidates[0];
+      let bestScore = contextualScore(normalizedText, best);
+      for (const c of candidates.slice(1)) {
+        const score = contextualScore(normalizedText, c);
+        if (score > bestScore) { best = c; bestScore = score; }
+      }
+      return best;
     }
   }
 }
@@ -257,12 +330,13 @@ export function extractBiomarker(
     // Phase 3: Context window
     const contextWindow = extractContextWindow(normalized, hit, pattern.contextWindowChars);
 
-    // Phase 4: Value extraction
+    // Phase 4: Value extraction (implicit values checked first)
     const extracted = extractValueFromWindow(
       contextWindow,
       hit,
       pattern.valuePatterns,
-      text
+      text,
+      pattern.implicitValues
     );
 
     if (!extracted) continue;
@@ -287,7 +361,7 @@ export function extractBiomarker(
   }
 
   // Phase 5: Tie-breaking
-  const best = applyTieBreaking(candidates, pattern.tieBreaking);
+  const best = applyTieBreaking(candidates, pattern.tieBreaking, normalized);
 
   return {
     value: best.value,

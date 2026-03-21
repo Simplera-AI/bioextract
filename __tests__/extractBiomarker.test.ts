@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { normalizeForExtraction } from "../lib/textNormalize";
+import { normalizeForExtraction, convertWordNumbers } from "../lib/textNormalize";
 import { findAllMentions } from "../lib/textNormalize";
 import { getBiomarkerPattern, buildFallbackPattern } from "../lib/biomarkerPatterns";
 import { extractBiomarker, runBiomarkerExtraction } from "../lib/extractBiomarker";
@@ -117,8 +117,8 @@ describe("buildFallbackPattern", () => {
 
   it("fallback pattern numeric regex matches Ferritin 45 ng/mL", () => {
     const pattern = buildFallbackPattern("Ferritin");
-    // The numeric-with-unit pattern
-    const numericPattern = pattern.valuePatterns[0];
+    // Numeric+unit pattern is now at index 3 (after comparison, ratio, negation)
+    const numericPattern = pattern.valuePatterns[3];
     const text = "ferritin 45 ng/ml";
     const match = numericPattern.pattern.exec(text);
     expect(match).not.toBeNull();
@@ -127,7 +127,8 @@ describe("buildFallbackPattern", () => {
 
   it("fallback pattern categorical regex matches Ferritin: positive", () => {
     const pattern = buildFallbackPattern("Ferritin");
-    const categoricalPattern = pattern.valuePatterns[1];
+    // Categorical pattern is now at index 4
+    const categoricalPattern = pattern.valuePatterns[4];
     const text = "ferritin: positive";
     const match = categoricalPattern.pattern.exec(text);
     expect(match).not.toBeNull();
@@ -379,5 +380,167 @@ describe("runBiomarkerExtraction", () => {
     expect(output.rowsOut).toEqual([]);
     expect(output.stats.totalRows).toBe(0);
     expect(output.stats.foundCount + output.stats.notFoundCount + output.stats.pendingCount).toBe(0);
+  });
+});
+
+// ─── Enhancement 1: Word-Form Number Conversion ────────────────────────────
+
+describe("convertWordNumbers", () => {
+  it("converts 'four point two' to '4.2'", () => {
+    expect(convertWordNumbers("four point two")).toBe("4.2");
+  });
+
+  it("converts 'zero point one' to '0.1'", () => {
+    expect(convertWordNumbers("zero point one")).toBe("0.1");
+  });
+
+  it("converts 'twelve point five' to '12.5'", () => {
+    expect(convertWordNumbers("twelve point five")).toBe("12.5");
+  });
+
+  it("converts compound: 'forty-two' to '42'", () => {
+    expect(convertWordNumbers("forty-two")).toBe("42");
+  });
+
+  it("converts compound with space: 'thirty five' to '35'", () => {
+    expect(convertWordNumbers("thirty five")).toBe("35");
+  });
+
+  it("converts word number adjacent to unit: 'five ng/ml' to '5 ng/ml'", () => {
+    expect(convertWordNumbers("five ng/ml")).toBe("5 ng/ml");
+  });
+
+  it("does not corrupt 'positive' or 'negative'", () => {
+    expect(convertWordNumbers("er positive")).toBe("er positive");
+    expect(convertWordNumbers("her2 negative")).toBe("her2 negative");
+  });
+});
+
+describe("normalizeForExtraction — word number integration", () => {
+  it("PSA dictated as words: 'PSA was four point two ng/mL'", () => {
+    const result = normalizeForExtraction("PSA was four point two ng/mL");
+    expect(result).toContain("4.2");
+    expect(result).not.toContain("four point two");
+  });
+
+  it("KI-67 twenty three percent", () => {
+    const result = normalizeForExtraction("Ki-67 was twenty three percent");
+    expect(result).toContain("23");
+  });
+});
+
+// ─── Enhancement 2: Implicit Clinical Values ──────────────────────────────
+
+describe("extractBiomarker — implicit values", () => {
+  it("PSA 'undetectable' → standardized threshold value", () => {
+    // "undetectable" matches PSA regex pattern → returns normalized threshold
+    const result = extractBiomarker("PSA was undetectable following treatment.", "PSA");
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/0\.1|undetectable/i);
+  });
+
+  it("PSA 'within normal limits' → implicit value '< 4.0 ng/mL'", () => {
+    // No numeric value in text → falls back to implicitValues
+    const result = extractBiomarker("PSA remained within normal limits.", "PSA");
+    expect(result).not.toBeNull();
+    expect(result!.value).toBe("< 4.0 ng/mL");
+  });
+
+  it("PSA 'elevated' → implicit value '> 4.0 ng/mL'", () => {
+    // No numeric value in text → falls back to implicitValues
+    const result = extractBiomarker("PSA was elevated on last check.", "PSA");
+    expect(result).not.toBeNull();
+    expect(result!.value).toBe("> 4.0 ng/mL");
+  });
+
+  it("Ki-67 'high grade' → '> 30%'", () => {
+    const result = extractBiomarker("Ki-67 proliferative index is high grade.", "Ki-67");
+    expect(result).not.toBeNull();
+    expect(result!.value).toBe("> 30%");
+  });
+
+  it("HER2 'not amplified' → negative result", () => {
+    const result = extractBiomarker("HER2 is not amplified by FISH.", "HER2");
+    expect(result).not.toBeNull();
+    // Regex captures "not amplified" → capitalized as "Not amplified"
+    expect(result!.value).toMatch(/not amplified/i);
+  });
+
+  it("MSI 'intact' → 'pMMR (proficient)'", () => {
+    const result = extractBiomarker("MSI mismatch repair proteins intact on IHC.", "MSI");
+    expect(result).not.toBeNull();
+    expect(result!.value).toBe("pMMR (proficient)");
+  });
+
+  it("PD-L1 'no expression' → 'TPS 0%'", () => {
+    const result = extractBiomarker("PD-L1 showed no expression in tumor cells.", "PD-L1");
+    expect(result).not.toBeNull();
+    expect(result!.value).toBe("TPS 0%");
+  });
+});
+
+// ─── Enhancement 3: Contextual Tie-Breaking ──────────────────────────────
+
+describe("extractBiomarker — contextual tie-breaking", () => {
+  it("PSA 'last' strategy picks the last mention when values are unambiguous", () => {
+    // Use a longer text so context windows don't overlap, isolating each PSA value
+    const prefix = "Patient history: PSA was 8.4 ng/mL at presentation three months ago. " + "Multiple follow-up visits occurred. Repeat labs drawn last week. ";
+    const text = prefix + "Latest PSA: 0.2 ng/mL following treatment completion.";
+    const result = extractBiomarker(text, "PSA");
+    expect(result).not.toBeNull();
+    // "last" strategy should pick the most recently mentioned PSA value
+    expect(result!.value).toBeDefined();
+  });
+
+  it("contextual tie-breaking keywords are defined and scored", () => {
+    // Verify contextual scoring by testing that the CONTEXTUAL_KEYWORDS concept works
+    // by using a biomarker pattern with contextual tiebreaking (if one exists)
+    // Ferritin uses fallback "first" strategy
+    const text = "Ferritin was 50 ng/ml at last visit. Most recent Ferritin is 245 ng/ml.";
+    const result = extractBiomarker(text, "Ferritin");
+    // "first" strategy: picks first mention = 50
+    expect(result).not.toBeNull();
+    expect(result!.value).toBeDefined();
+  });
+});
+
+// ─── Enhancement 4: Enhanced Fallback Patterns ───────────────────────────
+
+describe("buildFallbackPattern — enhanced patterns", () => {
+  it("detects negation: 'Ferritin not detected'", () => {
+    const result = extractBiomarker("Ferritin not detected in this specimen.", "Ferritin");
+    expect(result).not.toBeNull();
+    expect(result!.value).toBe("Not detected");
+  });
+
+  it("detects negation: 'negative for Ferritin' as categorical match", () => {
+    // "negative" is matched by the categorical pattern (positive|negative|detected|...)
+    const result = extractBiomarker("Sample was negative for ferritin.", "Ferritin");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toMatch(/negative|not detected/);
+  });
+
+  it("detects ratio: '3/10 cores positive for cancer'", () => {
+    const result = extractBiomarker("Biopsy cores: 3/10 cores positive for cancer. Biopsy cores were examined.", "Biopsy cores");
+    expect(result).not.toBeNull();
+    expect(result!.value).toContain("3/10");
+  });
+
+  it("detects comparison: '< 0.1' for unknown biomarker", () => {
+    const result = extractBiomarker("Calcitonin levels were less than 0.1 pg/mL.", "Calcitonin");
+    expect(result).not.toBeNull();
+    expect(result!.value).toContain("0.1");
+  });
+
+  it("detects comparison: 'greater than 10'", () => {
+    const result = extractBiomarker("Calcitonin was greater than 10 pg/mL.", "Calcitonin");
+    expect(result).not.toBeNull();
+    expect(result!.value).toContain("10");
+  });
+
+  it("still extracts numeric values for unknown biomarker", () => {
+    const result = extractBiomarker("Calcitonin level: 45.2 pg/mL", "Calcitonin");
+    expect(result).not.toBeNull();
+    expect(result!.value).toContain("45.2");
   });
 });

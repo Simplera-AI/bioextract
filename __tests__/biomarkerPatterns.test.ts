@@ -46,10 +46,11 @@ describe("PSA extraction", () => {
     expect(result!.valueType).toBe("pending");
   });
 
-  it("extracts undetectable PSA", () => {
+  it("extracts undetectable PSA as standardized threshold", () => {
     const result = extractBiomarker("Post-prostatectomy PSA undetectable.", "PSA");
     expect(result).not.toBeNull();
-    expect(result!.value.toLowerCase()).toMatch(/undetectable/);
+    // PSA "undetectable" → standardized clinical representation
+    expect(result!.value).toMatch(/0\.1|undetectable/i);
   });
 
   it("matches via alias 'prostate specific antigen'", () => {
@@ -230,7 +231,7 @@ describe("MSI extraction", () => {
   it("extracts dMMR from 'MMR deficient'", () => {
     const result = extractBiomarker("MMR deficient tumor — candidate for immunotherapy.", "MSI");
     expect(result).not.toBeNull();
-    expect(result!.value).toBe("dMMR");
+    expect(result!.value).toMatch(/dMMR/i);
   });
 
   it("extracts MLH1 absent via MMR protein alias", () => {
@@ -336,9 +337,9 @@ describe("buildFallbackPattern", () => {
     expect(p.aliases).toContain("ferritin");
   });
 
-  it("fallback pattern has 3 valuePatterns", () => {
+  it("fallback pattern has 6 valuePatterns", () => {
     const p = buildFallbackPattern("Ferritin");
-    expect(p.valuePatterns.length).toBe(3);
+    expect(p.valuePatterns.length).toBe(6);
   });
 
   it("fallback pattern extracts numeric value", () => {

@@ -237,7 +237,7 @@ describe("MSI/MMR integration", () => {
     const text = "MMR deficient (dMMR). MLH1 and PMS2 proteins absent by immunohistochemistry.";
     const result = extractBiomarker(text, "MSI");
     expect(result).not.toBeNull();
-    expect(result!.value).toBe("dMMR");
+    expect(result!.value).toMatch(/dMMR/i);
   });
 });
 

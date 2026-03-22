@@ -54,6 +54,7 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
     aliases: [
       "prostate specific antigen",
       "prostate-specific antigen",
+      "prostate antigen",
       "psa density",
       "psa velocity",
       "free psa",
@@ -100,9 +101,17 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
         transform: (raw) => raw.trim(),
       },
       {
+        // Narrative forms: "PSA showed 4.2", "PSA came back at 6.8 ng/mL",
+        // "PSA found to be 4.2", "PSA measured at 12.4", "PSA returned at 0.2 ng/mL"
+        pattern: /(?:psa|prostate[\s-]?(?:specific\s+)?antigen)[\s\S]{0,50}?(?:showed?|revealed?|returned?\s+at|found\s+to\s+be|measured?\s+(?:to\s+be\s+)?at|came?\s+back(?:\s+at)?|result(?:ed)?\s+(?:in|of))\s+(\d+(?:\.\d+)?\s*(?:ng\/ml|ng\/dl|u\/l|miu\/l)?)/i,
+        context: "PSA narrative value",
+        valueType: "numeric",
+        transform: (raw) => raw.trim(),
+      },
+      {
         // "PSA 4.2 ng/mL", "PSA: 4.2", "PSA was 4.2", "PSA level was 4.2", "PSA = 12.4 ng/mL"
         // Also matches alias forms like "prostate specific antigen 6.8"
-        pattern: /(?:psa|prostate[\s-]specific\s+antigen|prostate\s+specific\s+antigen)[\s\S]{0,30}?(\d+(?:\.\d+)?\s*(?:ng\/ml|ng\/dl|u\/l|miu\/l)?)/i,
+        pattern: /(?:psa|prostate[\s-]specific\s+antigen|prostate\s+specific\s+antigen|prostate\s+antigen)[\s\S]{0,30}?(\d+(?:\.\d+)?\s*(?:ng\/ml|ng\/dl|u\/l|miu\/l)?)/i,
         context: "numeric value",
         valueType: "numeric",
         transform: (raw) => raw.trim(),
@@ -1051,9 +1060,10 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
         transform: (raw) => raw.trim(),
       },
       {
-        // 6. Bare numeric (last resort)
+        // 6. Bare numeric + narrative connectors (last resort)
+        // Covers: "X: 4.2", "X was 4.2", "X showed 4.2", "X found to be 4.2", "X measured at 4.2"
         pattern: new RegExp(
-          flexEscaped + "[\\s:=]*(?:of|is|was|at|level|score|value|result|measured|:)?\\s*:?\\s*(\\d+(?:\\.\\d+)?)",
+          flexEscaped + "[\\s:=]*(?:of|is|was|at|level|score|value|result|measured|showed?|revealed?|found\\s+to\\s+be|returned?\\s+at|measured?\\s+at|came?\\s+back(?:\\s+at)?|:)?\\s*:?\\s*(\\d+(?:\\.\\d+)?)",
           "i"
         ),
         context: "bare numeric",

@@ -127,15 +127,47 @@ Pre-defined patterns for 18+ biomarkers:
 | PI-QUAL | first | |
 | BI-RADS | highest | Most suspicious finding |
 
-**Fallback pattern** (`buildFallbackPattern()`): dynamically generates 3 general-purpose patterns for any unknown biomarker: numeric+unit, categorical status (positive/negative/detected), bare numeric.
+**Fallback pattern** (`buildFallbackPattern()`): dynamically generates 6 general-purpose patterns for any unknown biomarker: numeric+unit, categorical status (positive/negative/detected), comparison (</>), ratio (3/10), negation (not detected), and bare numeric with narrative connectors ("showed", "found to be", "measured at", "came back at").
 
 ### `lib/textNormalize.ts`
 
 `normalizeForExtraction()` handles:
 - Unicode whitespace (non-breaking space, em-space, thin-space from EMR exports) → regular space
 - Em-dash/en-dash → hyphen
-- European decimal comma: `4,2` → `4.2`
+- European decimal comma: `4,2` → `4.2` (only 1–2 digit groups; preserves `8,000`)
 - Unicode superscript digits (from PDF copy-paste) → ASCII
+
+---
+
+## Extraction Quality Features
+
+### NegEx-style Negation Scope (`lib/extractBiomarker.ts`)
+
+After extracting a numeric/comparison/range value, `isNegatedBetween()` checks whether a negation cue appears between the alias end and the captured value start, WITHOUT a scope terminator in between.
+
+- **Negation cues**: `not`, `no`, `never`, `without`, `denies`, `denied`, `rules out`, `ruled out`, `absent`, `negative`, `unremarkable`
+- **Scope terminators**: `.`, `;`, `!`, `?`, `but`, `however`, `except`, `although`, `despite`, `yet`, `though`, `whereas`
+- Categorical results that ARE negation phrases (e.g. "not detected", "negative") are exempt — their raw value already encodes the negation.
+- Example: `"PSA not detected; now 8.4 ng/mL"` → semicolon terminates scope → 8.4 extracted
+
+### Pronoun Coreference Resolution (`lib/extractBiomarker.ts`)
+
+`resolvePronounCoreferences()` runs before normalization. It replaces sentence-initial pronouns (`It`, `This`, `The value/level/result/score/marker/measurement`) with the biomarker's shortest alias when the pronoun appears within 200 chars of a prior biomarker mention.
+
+- Only replaces at sentence boundaries (after `[.!?]`) to avoid false positives mid-sentence.
+- Enables: `"PSA 8.4. It rose to 12.1 ng/mL."` → extracts 12.1 (tie-breaking: last)
+
+### Sentence-Boundary Context Window Trimming (`lib/extractBiomarker.ts`)
+
+`extractContextWindow()` trims the window's left edge to the nearest sentence boundary before the hit. This prevents biomarker patterns that embed the name as an anchor (e.g. PSA patterns contain "psa") from matching an EARLIER mention that falls in the same large context window.
+
+- Example: `"PSA was 8.4. PSA rose to 12.1."` — the second PSA mention's window is trimmed to start at "PSA rose to 12.1.", so the pattern sees 12.1, not 8.4.
+
+### Narrative Pattern Expansion (`lib/biomarkerPatterns.ts`)
+
+PSA and fallback patterns recognise narrative verb phrases: `found to be`, `showed`, `revealed`, `returned at`, `measured at`, `came back at`, `resulted in/of`.
+
+- Example: `"PSA was found to be 4.2 ng/mL"` → extracts 4.2
 
 ---
 

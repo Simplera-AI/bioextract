@@ -721,3 +721,136 @@ describe("Robustness — word numbers in clinical text data", () => {
     expect(result!.value).toMatch(/20/);
   });
 });
+
+// ─── Feature: NegEx-style Sentence-Boundary Negation Scope ───────────────────
+
+describe("Negation scope — Feature 1", () => {
+  it("skips numeric value when negation cue is between alias and value (same clause)", () => {
+    // "PSA not elevated at 8.4 ng/mL" — 'not' is between 'psa' and '8.4'
+    const result = extractBiomarker("PSA not elevated at 8.4 ng/mL.", "PSA");
+    // Should return null (negated) or implicit "> 4.0 ng/mL" but NOT raw 8.4
+    if (result) {
+      expect(result.value).not.toMatch(/^8\.4/);
+    }
+  });
+
+  it("still extracts value when semicolon terminates negation scope", () => {
+    // Semicolon is a scope terminator — negation cue before ';' does not negate value after ';'
+    // "PSA not detected; now 8.4 ng/mL." — 'not' before ';', value '8.4' after ';' — should extract 8.4
+    const result = extractBiomarker(
+      "PSA not detected; now 8.4 ng/mL.",
+      "PSA"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/8\.4/);
+  });
+
+  it("still extracts value when 'but' terminates negation scope", () => {
+    // "PSA not detected but now measures 8.4" — 'but' terminates scope
+    const result = extractBiomarker(
+      "PSA not detected, but currently 8.4 ng/mL.",
+      "PSA"
+    );
+    // The 8.4 after 'but' should still be extractable
+    expect(result).not.toBeNull();
+  });
+
+  it("extracts categorical 'not detected' correctly (not filtered by negation check)", () => {
+    // Categorical negation results are exempt from the negation scope filter
+    const result = extractBiomarker("KRAS: mutation not detected.", "KRAS");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toMatch(/not\s+detected/);
+  });
+
+  it("does not skip value when negation cue is before the biomarker itself", () => {
+    // "No evidence of elevated PSA. PSA: 4.2 ng/mL." — negation is far before
+    const result = extractBiomarker(
+      "No evidence of elevated PSA concerns. PSA: 4.2 ng/mL.",
+      "PSA"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/4\.2/);
+  });
+});
+
+// ─── Feature: Pronoun Coreference Resolution ─────────────────────────────────
+
+describe("Pronoun coreference — Feature 2", () => {
+  it("resolves 'It' at sentence start to extract second value", () => {
+    // PSA tie-breaking is "last" so final value should be 12.1
+    const result = extractBiomarker(
+      "PSA was 8.4 ng/mL. It rose to 12.1 ng/mL.",
+      "PSA"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/12\.1/);
+  });
+
+  it("resolves 'This' at sentence start to extract second value", () => {
+    const result = extractBiomarker(
+      "PSA was 4.2 ng/mL. This increased to 6.8 ng/mL by next visit.",
+      "PSA"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/6\.8/);
+  });
+
+  it("does not replace pronoun when no biomarker mention precedes it", () => {
+    // "It" far from any PSA mention — should not affect unrelated extraction
+    const result = extractBiomarker(
+      "It was a routine check. PSA 4.2 ng/mL.",
+      "PSA"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/4\.2/);
+  });
+});
+
+// ─── Feature: Narrative Pattern Expansion ────────────────────────────────────
+
+describe("Narrative patterns — Feature 3", () => {
+  it("extracts PSA from 'found to be' narrative", () => {
+    const result = extractBiomarker(
+      "PSA was found to be 4.2 ng/mL on the most recent draw.",
+      "PSA"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/4\.2/);
+  });
+
+  it("extracts PSA from 'showed' narrative", () => {
+    const result = extractBiomarker(
+      "Blood work showed PSA of 6.8 ng/mL.",
+      "PSA"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/6\.8/);
+  });
+
+  it("extracts PSA from 'came back at' narrative", () => {
+    const result = extractBiomarker(
+      "PSA came back at 0.2 ng/mL post-treatment.",
+      "PSA"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/0\.2/);
+  });
+
+  it("extracts via 'prostate antigen' alias (narrative alias)", () => {
+    const result = extractBiomarker(
+      "The prostate antigen level was 5.1 ng/mL.",
+      "PSA"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/5\.1/);
+  });
+
+  it("extracts unknown biomarker via fallback narrative pattern", () => {
+    const result = extractBiomarker(
+      "Ferritin showed 245 ng/mL on admission.",
+      "Ferritin"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/245/);
+  });
+});

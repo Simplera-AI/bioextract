@@ -337,9 +337,9 @@ describe("buildFallbackPattern", () => {
     expect(p.aliases).toContain("ferritin");
   });
 
-  it("fallback pattern has 6 valuePatterns", () => {
+  it("fallback pattern has expected valuePatterns (A-I + 1,2,3,4a,4b,4,5,6)", () => {
     const p = buildFallbackPattern("Ferritin");
-    expect(p.valuePatterns.length).toBe(15);
+    expect(p.valuePatterns.length).toBe(17);
   });
 
   it("fallback pattern extracts numeric value", () => {
@@ -701,5 +701,62 @@ describe("Fallback: copy number alteration", () => {
     const result = extractBiomarker("MET copy number gain detected.", "MET");
     expect(result).not.toBeNull();
     expect(result!.value.toLowerCase()).toContain("copy number gain");
+  });
+});
+
+// ─── Breaking Point Fixes ────────────────────────────────────────────────────
+
+describe("BP1/BP6: Fallback range pattern", () => {
+  it("extracts numeric range 'Ferritin 45-120 ng/mL'", () => {
+    const result = extractBiomarker("Ferritin 45-120 ng/mL (elevated).", "Ferritin");
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/45/);
+    expect(result!.value).toMatch(/120/);
+  });
+
+  it("range result has valueType 'range'", () => {
+    const result = extractBiomarker("Ferritin level: 45-120 ng/mL", "Ferritin");
+    expect(result).not.toBeNull();
+    expect(result!.valueType).toBe("range");
+  });
+});
+
+describe("BP7: Fallback OR-alternative readings", () => {
+  it("extracts 'CD4 count 200 or 300 cells/uL' as composite", () => {
+    const result = extractBiomarker("CD4 count 200 or 300 cells/uL on repeat testing.", "CD4 count");
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/200/);
+    expect(result!.value).toMatch(/or/i);
+    expect(result!.value).toMatch(/300/);
+  });
+});
+
+describe("BP3: Pattern D false positive prevention (A1c)", () => {
+  it("query 'Hemoglobin' on text with 'A1c' extracts numeric value, NOT 'a1c'", () => {
+    const result = extractBiomarker("Hemoglobin A1c 12.5 g/dL elevated.", "Hemoglobin");
+    // Should NOT extract 'A1C' (single-digit mutation code false positive)
+    // Should extract the numeric value or be null (not 'A1C')
+    if (result !== null) {
+      expect(result!.value.toUpperCase()).not.toBe("A1C");
+    }
+  });
+
+  it("real 2-digit mutation G12C is still extracted correctly", () => {
+    const result = extractBiomarker("KRAS G12C mutation confirmed.", "KRAS");
+    expect(result).not.toBeNull();
+    expect(result!.value.toUpperCase()).toContain("G12C");
+  });
+});
+
+describe("BP9: Header/disclaimer skip phrases", () => {
+  it("skips 'reference range' value, extracts actual result from PSA", () => {
+    // "PSA Reference Range: 0-4 ng/mL. PSA: 12.4 ng/mL." — should extract 12.4, not 0 or 4
+    const result = extractBiomarker(
+      "PSA Reference Range: 0-4 ng/mL. PSA: 12.4 ng/mL.",
+      "PSA"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/12\.4/);
+    expect(result!.value).not.toMatch(/^0[-–]4/);
   });
 });

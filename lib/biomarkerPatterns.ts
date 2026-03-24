@@ -42,6 +42,32 @@ export interface BiomarkerPattern {
    * e.g. { "undetectable": "< 0.1 ng/mL", "normal": "< 4.0 ng/mL" }
    */
   implicitValues?: Record<string, string>;
+  /**
+   * Phrases that, when found within 80 chars BEFORE a regex match, indicate the
+   * match is from a header/disclaimer row rather than a real result — skip it.
+   * Examples: "reference range", "normal range", "method:", "assay:", "expected range"
+   */
+  skipPhrases?: string[];
+}
+
+// ─── Unit Normalizer ──────────────────────────────────────────────────────
+
+/**
+ * Standardize common unit capitalisations in extracted values.
+ * Called from fallback pattern transforms to ensure consistent output.
+ * e.g. "4.2 ng/ml" → "4.2 ng/mL", "45 iu/l" → "45 IU/L"
+ */
+export function normalizeUnit(raw: string): string {
+  return raw
+    .replace(/\bng\/ml\b/gi, "ng/mL")
+    .replace(/\bng\/dl\b/gi, "ng/dL")
+    .replace(/\bug\/l\b/gi, "µg/L")
+    .replace(/\bg\/dl\b/gi, "g/dL")
+    .replace(/\biu\/l\b/gi, "IU/L")
+    .replace(/\bmiu\/l\b/gi, "mIU/L")
+    .replace(/\bcopies\/ml\b/gi, "copies/mL")
+    .replace(/\bcells\/ul\b/gi, "cells/µL")
+    .replace(/\bcells\/mm3\b/gi, "cells/mm³");
 }
 
 // ─── Pattern Library ──────────────────────────────────────────────────────
@@ -65,6 +91,7 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
     comparisonStrategy: "both",
     contextWindowChars: 250,
     pendingPhrases: ["pending", "ordered", "not available", "not done", "to follow", "awaited"],
+    skipPhrases: ["reference range", "normal range", "expected range", "units:", "method:", "assay:"],
     implicitValues: {
       "undetectable":           "< 0.1 ng/mL",
       "undetected":             "< 0.1 ng/mL",
@@ -1002,6 +1029,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
     tieBreaking: "first",
     contextWindowChars: 200,
     pendingPhrases: ["pending", "not done", "not performed", "ordered", "not available", "to follow"],
+    skipPhrases: ["reference range", "normal range", "expected range", "units:", "method:", "assay:"],
     valuePatterns: [
       {
         // A. HGVS cDNA variant: c.1234A>G, c.5266dupC, c.3140delA, c.88+1G>T
@@ -1039,9 +1067,11 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
       },
       {
         // D. Short alphanumeric mutation code: G12C, V600E, L858R, G245S, R175H, H1047R
-        // Anchored to biomarker name to avoid false matches (e.g. TNM T2 → not a mutation)
+        // Anchored to biomarker name to avoid false matches (e.g. TNM T2 → not a mutation).
+        // Requires 2–4 digits to prevent false positives on clinical abbreviations like
+        // "A1c" (Hemoglobin A1c) or "T2a" (TNM stage) which have only a single digit.
         pattern: new RegExp(
-          flexEscaped + "[\\s\\S]{0,40}?(?<![a-z])([a-z]\\d{1,4}[a-z](?:fs|del|ins)?)(?![a-z0-9])",
+          flexEscaped + "[\\s\\S]{0,40}?(?<![a-z])([a-z]\\d{2,4}[a-z](?:fs|del|ins)?)(?![a-z0-9])",
           "i"
         ),
         context: "alphanumeric mutation code",
@@ -1153,6 +1183,28 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
         transform: () => "Not detected",
       },
       {
+        // 4a. Numeric range: "Ferritin 45-120 ng/mL", "value 3.2–5.0"
+        // Must come BEFORE bare numeric so "45-120" doesn't get truncated to "45".
+        pattern: new RegExp(
+          flexEscaped + "[\\s\\S]{0,60}?(\\d+(?:\\.\\d+)?\\s*[-\u2013]\\s*\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
+          "i"
+        ),
+        context: "numeric range",
+        valueType: "range",
+        transform: (raw) => normalizeUnit(raw.trim()),
+      },
+      {
+        // 4b. OR-alternative readings: "CD4 count 200 or 300 cells/uL"
+        // Captures two numeric readings linked by "or".
+        pattern: new RegExp(
+          flexEscaped + "[\\s\\S]{0,60}?(\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?\\s+or\\s+\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
+          "i"
+        ),
+        context: "OR alternative readings",
+        valueType: "composite",
+        transform: (raw) => normalizeUnit(raw.trim()),
+      },
+      {
         // 4. Numeric + unit
         pattern: new RegExp(
           flexEscaped + "[\\s\\S]{0,60}?(\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
@@ -1160,7 +1212,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
         ),
         context: "numeric value with optional unit",
         valueType: "numeric",
-        transform: (raw) => raw.trim(),
+        transform: (raw) => normalizeUnit(raw.trim()),
       },
       {
         // 5. Categorical status

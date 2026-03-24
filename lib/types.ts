@@ -60,6 +60,8 @@ export interface ExtractionStats {
   biomarkerName: string;
   column: string;
   durationMs: number;
+  /** Number of rows where AI enrichment was used (only non-zero when NEXT_PUBLIC_AI_ENRICHMENT=true) */
+  aiEnrichedCount?: number;
 }
 
 // ─── UI State ─────────────────────────────────────────────────────────────

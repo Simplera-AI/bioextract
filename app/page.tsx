@@ -15,7 +15,7 @@ import ExtractionProgress from "@/components/ExtractionProgress";
 import ResultsPreview from "@/components/ResultsPreview";
 import BioExtractDownloadButtons from "@/components/BioExtractDownloadButtons";
 
-import { runBiomarkerExtraction } from "@/lib/extractBiomarker";
+import { runBiomarkerExtraction, runBiomarkerExtractionAsync } from "@/lib/extractBiomarker";
 import type {
   AppState,
   ParsedFile,
@@ -135,35 +135,31 @@ export default function HomePage() {
     }));
 
     // Use setTimeout to allow React to re-render the progress UI before extraction starts
+    const aiEnabled = process.env.NEXT_PUBLIC_AI_ENRICHMENT === "true";
     setTimeout(() => {
-      try {
-        const output: ExtractionOutput = runBiomarkerExtraction(
-          rows,
-          sheetData.headers,
-          selectedColumn,
-          biomarkerQuery.trim(),
-          (processed) => {
-            const percent = Math.round((processed / total) * 100);
-            setState((s) => ({
-              ...s,
-              progress: { processed, total, percent },
-            }));
-          }
-        );
+      const onProgress = (processed: number) => {
+        const percent = Math.round((processed / total) * 100);
+        setState((s) => ({ ...s, progress: { processed, total, percent } }));
+      };
 
+      const run: Promise<ExtractionOutput> = aiEnabled
+        ? runBiomarkerExtractionAsync(rows, sheetData.headers, selectedColumn, biomarkerQuery.trim(), onProgress)
+        : Promise.resolve(runBiomarkerExtraction(rows, sheetData.headers, selectedColumn, biomarkerQuery.trim(), onProgress));
+
+      run.then((output) => {
         setState((s) => ({
           ...s,
           extractionStatus: "done",
           output,
           activeStep: 5,
         }));
-      } catch (err) {
+      }).catch((err) => {
         setState((s) => ({
           ...s,
           extractionStatus: "error",
           extractionError: err instanceof Error ? err.message : "Extraction failed.",
         }));
-      }
+      });
     }, 50);
   }, [state]);
 
@@ -337,7 +333,7 @@ export default function HomePage() {
                 <StepHeader
                   icon={<Download className="h-5 w-5" />}
                   title="Extraction complete"
-                  description={`Found "${output.stats.biomarkerName}" in ${output.stats.foundCount.toLocaleString()} of ${output.stats.totalRows.toLocaleString()} rows`}
+                  description={`Found "${output.stats.biomarkerName}" in ${output.stats.foundCount.toLocaleString()} of ${output.stats.totalRows.toLocaleString()} rows${output.stats.aiEnrichedCount ? ` · ${output.stats.aiEnrichedCount} AI-enriched` : ""}`}
                 />
                 <div className="space-y-6">
                   <ResultsPreview output={output} />

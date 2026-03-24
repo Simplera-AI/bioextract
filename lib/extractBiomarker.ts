@@ -22,6 +22,7 @@ import {
   type BiomarkerPattern,
   type ValueCapturePattern,
 } from "./biomarkerPatterns";
+import { enrichWithAI } from "./aiEnrichment";
 import type {
   BiomarkerExtractionResult,
   BiomarkerValueType,
@@ -572,6 +573,87 @@ export function runBiomarkerExtraction(
     biomarkerName: trimmedQuery,
     column: selectedColumn,
     durationMs: Date.now() - startTime,
+  };
+
+  return { headersOut, rowsOut, stats };
+}
+
+// ─── Async variants with optional AI enrichment ──────────────────────────────
+
+/**
+ * Async variant of extractBiomarker.
+ * For known biomarkers: identical to the sync version.
+ * For unknown biomarkers (fallback pattern): optionally calls AI enrichment when
+ *   NEXT_PUBLIC_AI_ENRICHMENT=true and the rule result is null or bare-numeric.
+ */
+export async function extractBiomarkerAsync(
+  text: string,
+  biomarkerQuery: string
+): Promise<BiomarkerExtractionResult | null> {
+  const isFallback = getBiomarkerPattern(biomarkerQuery) === null;
+  const ruleResult = extractBiomarker(text, biomarkerQuery);
+  if (!isFallback) return ruleResult;
+  const { result } = await enrichWithAI(biomarkerQuery, text, ruleResult, isFallback);
+  return result;
+}
+
+/**
+ * Async variant of runBiomarkerExtraction with optional AI enrichment per row.
+ * Falls back to sync extractBiomarker for known biomarkers (no extra latency).
+ * Tracks how many rows were AI-enriched in stats.aiEnrichedCount.
+ */
+export async function runBiomarkerExtractionAsync(
+  rows: Record<string, string>[],
+  originalHeaders: string[],
+  selectedColumn: string,
+  biomarkerQuery: string,
+  onProgress?: (processed: number) => void
+): Promise<ExtractionOutput> {
+  const startTime = Date.now();
+  const trimmedQuery = biomarkerQuery.trim();
+  const valueCol = trimmedQuery + " Value";
+  const evidenceCol = trimmedQuery + " Evidence";
+  const headersOut = [...originalHeaders, valueCol, evidenceCol];
+
+  let foundCount = 0;
+  let notFoundCount = 0;
+  let pendingCount = 0;
+  let aiEnrichedCount = 0;
+
+  const rowsOut: Record<string, string>[] = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const cellText = rows[i][selectedColumn] ?? "";
+    const result = await extractBiomarkerAsync(cellText, trimmedQuery);
+
+    onProgress?.(i + 1);
+
+    if (!result) {
+      notFoundCount++;
+      rowsOut.push({ ...rows[i], [valueCol]: "", [evidenceCol]: "" });
+      continue;
+    }
+
+    if (result.valueType === "pending") pendingCount++;
+    else foundCount++;
+    if (result.aiEnriched) aiEnrichedCount++;
+
+    rowsOut.push({
+      ...rows[i],
+      [valueCol]: result.value,
+      [evidenceCol]: result.evidence,
+    });
+  }
+
+  const stats: ExtractionStats = {
+    totalRows: rows.length,
+    foundCount,
+    notFoundCount,
+    pendingCount,
+    biomarkerName: trimmedQuery,
+    column: selectedColumn,
+    durationMs: Date.now() - startTime,
+    aiEnrichedCount,
   };
 
   return { headersOut, rowsOut, stats };

@@ -958,13 +958,22 @@ export function getBiomarkerPattern(query: string): BiomarkerPattern | null {
  * Value patterns use the same flexible token regex so they still match when
  * the alias regex (not the exact string) found the mention.
  *
- * Generates 6 general-purpose patterns tried in order:
- *   1. Comparison / threshold  (< 0.1, > 4.0, less than X)
- *   2. Ratio / fraction        (3/10 cores)
- *   3. Negation detection      (not detected, negative for X, wild-type)
- *   4. Numeric + unit          (4.2 ng/mL)
- *   5. Categorical status      (positive, negative, detected…)
- *   6. Bare numeric            (last resort)
+ * Generates 15 general-purpose patterns tried in order (most specific first):
+ *   A. HGVS cDNA variant        (c.1234A>G, c.5266dupC)
+ *   B. HGVS protein change      (p.Gly12Cys, p.G12C, p.Gln1756fs)
+ *   C. Fusion gene              (CD74-ROS1 fusion, EML4-ALK rearrangement)
+ *   D. Alphanumeric mutation    (G12C, V600E, L858R, G245S)
+ *   E. Exon structural variant  (exon 19 deletion, exon 20 insertion)
+ *   F. Copy number              (copy number gain, CN 8, high-level amplification)
+ *   G. IHC score                (1+, 2+, 3+, Allred score 6/8)
+ *   H. Chromosomal aberration   (del(17p), gain(1q), loss of heterozygosity)
+ *   I. MSI/MMR status           (MSI-H, MSS, dMMR, pMMR)
+ *   1. Comparison / threshold   (< 0.1, > 4.0, less than X)
+ *   2. Ratio / fraction         (3/10 cores)
+ *   3. Negation detection       (not detected, negative for X, wild-type)
+ *   4. Numeric + unit           (4.2 ng/mL)
+ *   5. Categorical status       (positive, negative, detected…)
+ *   6. Bare numeric             (last resort)
  */
 export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
   const nameLower = biomarkerName.toLowerCase().trim();
@@ -994,6 +1003,110 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
     contextWindowChars: 200,
     pendingPhrases: ["pending", "not done", "not performed", "ordered", "not available", "to follow"],
     valuePatterns: [
+      {
+        // A. HGVS cDNA variant: c.1234A>G, c.5266dupC, c.3140delA, c.88+1G>T
+        // Matches HGVS nucleotide notation anchored to the biomarker name
+        pattern: new RegExp(
+          flexEscaped + "[\\s\\S]{0,60}?(c\\.\\d+[a-z0-9>_+\\-*]+)",
+          "i"
+        ),
+        context: "HGVS cDNA variant",
+        valueType: "composite",
+        transform: (raw) => raw.trim(),
+      },
+      {
+        // B. HGVS protein change: p.Gly12Cys, p.G12C, p.Arg248Trp, p.Gln1756fs, p.Trp53*
+        // Covers 1-letter (p.G12C) and 3-letter (p.Gly12Cys) amino acid codes
+        pattern: new RegExp(
+          flexEscaped + "[\\s\\S]{0,60}?(p\\.[a-z]{1,3}\\d+[a-z*][a-z0-9*]*)",
+          "i"
+        ),
+        context: "HGVS protein change",
+        valueType: "composite",
+        transform: (raw) => raw.trim(),
+      },
+      {
+        // C. Fusion gene: CD74-ROS1 fusion, EML4-ALK rearrangement, BCR-ABL1 translocation
+        // The fusion/rearrangement keyword is MANDATORY — prevents unit strings like
+        // "ng/ml" or "copies/ml" from being misread as gene-fusion notation.
+        pattern: /([a-z][a-z0-9]{1,9}[-/][a-z][a-z0-9]{0,9}\s+(?:fusion|rearrangement|translocation|arrangement))/i,
+        context: "fusion gene",
+        valueType: "composite",
+        transform: (raw) => {
+          // Uppercase the gene-name portion (everything before the trailing keyword)
+          return raw.trim().replace(/^([a-z][a-z0-9]*[-/][a-z][a-z0-9]*)/i, (g) => g.toUpperCase());
+        },
+      },
+      {
+        // D. Short alphanumeric mutation code: G12C, V600E, L858R, G245S, R175H, H1047R
+        // Anchored to biomarker name to avoid false matches (e.g. TNM T2 → not a mutation)
+        pattern: new RegExp(
+          flexEscaped + "[\\s\\S]{0,40}?(?<![a-z])([a-z]\\d{1,4}[a-z](?:fs|del|ins)?)(?![a-z0-9])",
+          "i"
+        ),
+        context: "alphanumeric mutation code",
+        valueType: "composite",
+        transform: (raw) => raw.trim().toUpperCase(),
+      },
+      {
+        // E. Exon structural variant: exon 19 deletion, exon 20 insertion, exon 11 skipping
+        pattern: new RegExp(
+          flexEscaped + "[\\s\\S]{0,50}?(exon\\s+\\d+(?:\\s*[-\\u2013]\\s*\\d+)?\\s+(?:deletion|insertion|duplication|skipping|mutation))",
+          "i"
+        ),
+        context: "exon structural variant",
+        valueType: "composite",
+        transform: (raw) => raw.trim(),
+      },
+      {
+        // F. Copy number: copy number gain/loss, CN 8, high-level amplification, focal amplification
+        pattern: new RegExp(
+          flexEscaped + "[\\s\\S]{0,50}?(copy\\s+number\\s+(?:gain|loss|amplification|neutral|increase|decrease)|high[-\\s]level\\s+amplification|focal\\s+amplification|cn\\s+\\d+)",
+          "i"
+        ),
+        context: "copy number",
+        valueType: "composite",
+        transform: (raw) => raw.trim(),
+      },
+      {
+        // G. IHC score: 1+, 2+, 3+ (with optional space before +), Allred score 6/8
+        pattern: new RegExp(
+          flexEscaped + "[\\s\\S]{0,40}?([0-3]\\s*\\+|allred\\s+score\\s+\\d+(?:\\/8)?)",
+          "i"
+        ),
+        context: "IHC score",
+        valueType: "composite",
+        transform: (raw) => raw.trim().replace(/\s+\+/, "+"),
+      },
+      {
+        // H. Chromosomal aberration: del(17p), gain(1q), loss of heterozygosity, LOH
+        pattern: new RegExp(
+          flexEscaped + "[\\s\\S]{0,50}?((?:del|gain|loss|amp)\\s*\\(\\d+[pq]\\d*\\)|loss\\s+of\\s+heterozygosity|\\bloh\\b)",
+          "i"
+        ),
+        context: "chromosomal aberration",
+        valueType: "composite",
+        transform: (raw) => raw.trim(),
+      },
+      {
+        // I. MSI/MMR molecular status: MSI-H, MSI-L, MSS, dMMR, pMMR
+        // Used as fallback when querying an unknown biomarker that happens to report MSI/MMR
+        pattern: new RegExp(
+          flexEscaped + "[\\s\\S]{0,50}?(msi[-\\s]?(?:high|low|h|l)|\\bmss\\b|[dp]mmr|microsatellite\\s+(?:instability|stable|unstable))",
+          "i"
+        ),
+        context: "MSI/MMR status",
+        valueType: "categorical",
+        transform: (raw) => {
+          const r = raw.trim().toLowerCase();
+          if (/msi.*h|msi.*high/i.test(r)) return "MSI-H";
+          if (/msi.*l|msi.*low/i.test(r)) return "MSI-L";
+          if (/^mss$|microsatellite.*stable/i.test(r)) return "MSS";
+          if (/^dmmr/i.test(r)) return "dMMR";
+          if (/^pmmr/i.test(r)) return "pMMR";
+          return raw.trim().toUpperCase();
+        },
+      },
       {
         // 1. Comparison: "< 0.1 ng/mL", "> 4.0", "less than 5", "greater than 10"
         // Uses flexEscaped so "prostat vol" pattern still fires on "prostate volume: ..." context

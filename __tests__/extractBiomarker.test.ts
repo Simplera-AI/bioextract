@@ -117,20 +117,20 @@ describe("buildFallbackPattern", () => {
 
   it("fallback pattern numeric regex matches Ferritin 45 ng/mL", () => {
     const pattern = buildFallbackPattern("Ferritin");
-    // Numeric+unit pattern is now at index 3 (after comparison, ratio, negation)
-    const numericPattern = pattern.valuePatterns[3];
+    const numericPattern = pattern.valuePatterns.find((p) => p.context === "numeric value with optional unit");
+    expect(numericPattern).toBeDefined();
     const text = "ferritin 45 ng/ml";
-    const match = numericPattern.pattern.exec(text);
+    const match = numericPattern!.pattern.exec(text);
     expect(match).not.toBeNull();
     expect(match![1]).toContain("45");
   });
 
   it("fallback pattern categorical regex matches Ferritin: positive", () => {
     const pattern = buildFallbackPattern("Ferritin");
-    // Categorical pattern is now at index 4
-    const categoricalPattern = pattern.valuePatterns[4];
+    const categoricalPattern = pattern.valuePatterns.find((p) => p.context === "categorical status");
+    expect(categoricalPattern).toBeDefined();
     const text = "ferritin: positive";
-    const match = categoricalPattern.pattern.exec(text);
+    const match = categoricalPattern!.pattern.exec(text);
     expect(match).not.toBeNull();
     expect(match![1].toLowerCase()).toBe("positive");
   });

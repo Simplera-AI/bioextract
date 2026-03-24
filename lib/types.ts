@@ -33,6 +33,8 @@ export interface BiomarkerExtractionResult {
   evidence: string;
   matchedAlias: string;
   confidence: "high" | "medium" | "low";
+  /** True when the value was produced by AI enrichment rather than rule-based extraction */
+  aiEnriched?: boolean;
 }
 
 // ─── Row-level output ─────────────────────────────────────────────────────

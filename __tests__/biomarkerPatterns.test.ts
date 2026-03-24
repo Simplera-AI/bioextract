@@ -339,7 +339,7 @@ describe("buildFallbackPattern", () => {
 
   it("fallback pattern has 6 valuePatterns", () => {
     const p = buildFallbackPattern("Ferritin");
-    expect(p.valuePatterns.length).toBe(6);
+    expect(p.valuePatterns.length).toBe(15);
   });
 
   it("fallback pattern extracts numeric value", () => {
@@ -644,5 +644,62 @@ describe("Bug #9: Levenshtein clean copy (correctness check)", () => {
     const pattern = getBiomarkerPattern("Gleison");
     expect(pattern).not.toBeNull();
     expect(pattern!.name).toBe("Gleason");
+  });
+});
+
+// ─── Enhanced Fallback Patterns — Molecular / Genomic Types ──────────────────
+
+describe("Fallback: alphanumeric mutation code", () => {
+  it("TP53 G245S → extracts G245S (not just 245)", () => {
+    const result = extractBiomarker("TP53 G245S mutation detected in tumor tissue.", "TP53");
+    expect(result).not.toBeNull();
+    expect(result!.value.toUpperCase()).toContain("G245S");
+  });
+
+  it("PIK3CA H1047R → extracts H1047R", () => {
+    const result = extractBiomarker("PIK3CA H1047R variant identified.", "PIK3CA");
+    expect(result).not.toBeNull();
+    expect(result!.value.toUpperCase()).toContain("H1047R");
+  });
+});
+
+describe("Fallback: fusion gene", () => {
+  it("ROS1 CD74-ROS1 fusion → extracts CD74-ROS1 fusion", () => {
+    const result = extractBiomarker("ROS1 CD74-ROS1 fusion identified by FISH.", "ROS1");
+    expect(result).not.toBeNull();
+    expect(result!.value.toUpperCase()).toContain("CD74-ROS1");
+  });
+});
+
+describe("Fallback: HGVS protein change", () => {
+  it("FGFR2 p.Cys383Arg → extracts p.Cys383Arg", () => {
+    const result = extractBiomarker("FGFR2 p.Cys383Arg variant detected.", "FGFR2");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("p.cys383arg");
+  });
+});
+
+describe("Fallback: HGVS cDNA variant", () => {
+  it("CDKN2A c.1234A>G → extracts c.1234A>G", () => {
+    // CDKN2A is not in the known pattern library and won't fuzzy-match any known pattern
+    const result = extractBiomarker("CDKN2A c.1234A>G detected in sequencing.", "CDKN2A");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("c.1234");
+  });
+});
+
+describe("Fallback: exon structural variant", () => {
+  it("PTEN exon 7 deletion → extracts exon 7 deletion", () => {
+    const result = extractBiomarker("PTEN exon 7 deletion confirmed by NGS.", "PTEN");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("exon 7 deletion");
+  });
+});
+
+describe("Fallback: copy number alteration", () => {
+  it("MET copy number gain → extracts copy number gain", () => {
+    const result = extractBiomarker("MET copy number gain detected.", "MET");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("copy number gain");
   });
 });

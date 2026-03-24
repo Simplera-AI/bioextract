@@ -268,7 +268,8 @@ function extractValueFromWindow(
   hit: MentionHit,
   valuePatterns: ValueCapturePattern[],
   _originalText: string,
-  implicitValues?: Record<string, string>
+  implicitValues?: Record<string, string>,
+  skipPhrases?: string[]
 ): { value: string; valueType: BiomarkerValueType; confidence: "high" | "medium" | "low" } | null {
   for (const vp of valuePatterns) {
     const match = vp.pattern.exec(contextWindow);
@@ -276,6 +277,16 @@ function extractValueFromWindow(
 
     const rawValue = match[1].trim();
     if (!rawValue) continue;
+
+    // Header/disclaimer skip: if any skipPhrase appears within 80 chars BEFORE the
+    // captured value, this match is likely from a reference-range row — skip it.
+    if (skipPhrases && skipPhrases.length > 0) {
+      const captureStart = (match.index ?? 0) + match[0].indexOf(match[1]);
+      const lookback = contextWindow.slice(Math.max(0, captureStart - 80), captureStart).toLowerCase();
+      if (skipPhrases.some((phrase) => lookback.includes(phrase.toLowerCase()))) {
+        continue;
+      }
+    }
 
     const value = vp.transform ? vp.transform(rawValue) : rawValue;
 
@@ -322,11 +333,18 @@ function extractValueFromWindow(
 
 /**
  * Parse a numeric value for tie-breaking. Returns null if not numeric.
+ *
+ * - comparison: returns the MAX number (e.g. "decreased from 8.4 to 0.2" → 8.4
+ *   so "highest" strategy correctly picks the comparison candidate when appropriate)
+ * - range: returns the UPPER bound (e.g. "3.2-5.0 ng/mL" → 5.0)
+ * - all others: returns the FIRST number
  */
-function parseNumericForTieBreaking(value: string): number | null {
-  const m = /(\d+(?:\.\d+)?)/.exec(value);
-  if (!m) return null;
-  return parseFloat(m[1]);
+function parseNumericForTieBreaking(value: string, valueType?: BiomarkerValueType): number | null {
+  const nums = [...value.matchAll(/(\d+(?:\.\d+)?)/g)].map((m) => parseFloat(m[1]));
+  if (nums.length === 0) return null;
+  if (valueType === "comparison") return Math.max(...nums);
+  if (valueType === "range") return nums[nums.length - 1]; // upper bound
+  return nums[0]; // first number (default)
 }
 
 // ─── Phase 5: Tie-Breaking ───────────────────────────────────────────────
@@ -485,7 +503,8 @@ export function extractBiomarker(
       hit,
       pattern.valuePatterns,
       text,
-      pattern.implicitValues
+      pattern.implicitValues,
+      pattern.skipPhrases
     );
 
     if (!extracted) continue;
@@ -499,7 +518,7 @@ export function extractBiomarker(
       evidence,
       matchedAlias: hit.alias,
       confidence: extracted.confidence,
-      numericValue: parseNumericForTieBreaking(extracted.value),
+      numericValue: parseNumericForTieBreaking(extracted.value, extracted.valueType),
       offset: hit.offset,
     });
   }

@@ -236,6 +236,7 @@ interface CandidateResult {
   confidence: "high" | "medium" | "low";
   numericValue: number | null;  // for tie-breaking
   offset: number;               // mention offset for tie-breaking
+  patternIndex: number;         // index in valuePatterns[] — lower = more specific
 }
 
 /**
@@ -271,8 +272,9 @@ function extractValueFromWindow(
   _originalText: string,
   implicitValues?: Record<string, string>,
   skipPhrases?: string[]
-): { value: string; valueType: BiomarkerValueType; confidence: "high" | "medium" | "low" } | null {
-  for (const vp of valuePatterns) {
+): { value: string; valueType: BiomarkerValueType; confidence: "high" | "medium" | "low"; patternIndex: number } | null {
+  for (let pi = 0; pi < valuePatterns.length; pi++) {
+    const vp = valuePatterns[pi];
     const match = vp.pattern.exec(contextWindow);
     if (!match || !match[1]) continue;
 
@@ -320,13 +322,13 @@ function extractValueFromWindow(
       distanceFromMention <= 30 ? "high" :
       distanceFromMention <= 80 ? "medium" : "low";
 
-    return { value, valueType: vp.valueType, confidence };
+    return { value, valueType: vp.valueType, confidence, patternIndex: pi };
   }
 
   // Implicit value fallback — only fires when no regex pattern matched
   if (implicitValues) {
     const implicit = checkImplicitValues(contextWindow, implicitValues);
-    if (implicit) return { ...implicit, confidence: "medium" };
+    if (implicit) return { ...implicit, confidence: "medium", patternIndex: valuePatterns.length };
   }
 
   return null;
@@ -487,6 +489,7 @@ export function extractBiomarker(
         confidence: "high",
         numericValue: null,
         offset: hit.offset,
+        patternIndex: -1, // PENDING is highest priority — lower than any valuePattern index
       });
       continue;
     }
@@ -521,6 +524,7 @@ export function extractBiomarker(
       confidence: extracted.confidence,
       numericValue: parseNumericForTieBreaking(extracted.value, extracted.valueType),
       offset: hit.offset,
+      patternIndex: extracted.patternIndex,
     });
   }
 
@@ -530,7 +534,13 @@ export function extractBiomarker(
   }
 
   // Phase 5: Tie-breaking
-  const best = applyTieBreaking(candidates, pattern.tieBreaking, normalized);
+  // Specificity pre-filter: when candidates matched via different patterns, keep only
+  // those from the most specific pattern (lowest index in valuePatterns[]).
+  // This ensures a mutation code (pattern D: R248Q) beats a functional consequence
+  // (pattern J: "biallelic loss") even when the consequence appears first in the text.
+  const bestPatternIndex = Math.min(...candidates.map((c) => c.patternIndex));
+  const topCandidates = candidates.filter((c) => c.patternIndex === bestPatternIndex);
+  const best = applyTieBreaking(topCandidates, pattern.tieBreaking, normalized);
 
   return {
     value: best.value,

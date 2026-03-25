@@ -504,6 +504,33 @@ describe("extractBiomarker — contextual tie-breaking", () => {
   });
 });
 
+// ─── Enhancement 3b: Pattern Specificity Pre-filter ──────────────────────
+// Regression tests for the patternIndex-based pre-filter that ensures a more
+// specific pattern (e.g. alphanumeric mutation code "R248Q", pattern D) always
+// beats a less specific one (e.g. functional consequence "biallelic loss", pattern J)
+// regardless of text position.
+
+describe("extractBiomarker — pattern specificity tie-breaking", () => {
+  it("TP53: mutation code R248Q beats functional consequence 'biallelic loss' even when biallelic loss appears first", () => {
+    // Real liquid biopsy report structure: consequence appears before specific variant
+    const text =
+      "Genomic findings: TP53 biallelic loss (functional consequence). " +
+      "Somatic mutations detected: TP53 R248Q | VAF 4.52% | clonal | pathogenic.";
+    const result = extractBiomarker(text, "TP53");
+    expect(result).not.toBeNull();
+    // The specific mutation code should win over the generic functional consequence
+    expect(result!.value).toMatch(/R248Q/i);
+  });
+
+  it("TP53: HGVS protein notation beats functional consequence", () => {
+    const text =
+      "TP53 loss of function detected. TP53 p.R248Q found at 4.52% VAF.";
+    const result = extractBiomarker(text, "TP53");
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/p\.R248Q|R248Q/i);
+  });
+});
+
 // ─── Enhancement 4: Enhanced Fallback Patterns ───────────────────────────
 
 describe("buildFallbackPattern — enhanced patterns", () => {

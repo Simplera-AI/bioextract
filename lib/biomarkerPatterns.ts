@@ -1022,6 +1022,12 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
     "gi"
   );
 
+  // Hard-boundary separator: prevents patterns from crossing pipe/newline/semicolon
+  // delimiters that separate different biomarker entries in structured molecular profiles.
+  // e.g. "TP53 G245S | BRCA2 c.1813delA" — TP53 patterns must not cross the "|" to grab BRCA2's value.
+  // Note: use \n (actual char) in character class — regex engine handles it correctly.
+  const NB = "[^|\\n\\r;]"; // no-boundary char class (string fragment for RegExp constructor)
+
   return {
     name: biomarkerName,
     aliases: [nameLower],
@@ -1033,9 +1039,10 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
     valuePatterns: [
       {
         // A. HGVS cDNA variant: c.1234A>G, c.5266dupC, c.3140delA, c.88+1G>T
-        // Matches HGVS nucleotide notation anchored to the biomarker name
+        // Window capped at 30 chars (HGVS notation appears immediately after gene name).
+        // NB class prevents crossing | ; \n separators between biomarker entries.
         pattern: new RegExp(
-          flexEscaped + "[\\s\\S]{0,60}?(c\\.\\d+[a-z0-9>_+\\-*]+)",
+          flexEscaped + NB + "{0,30}?(c\\.\\d+[a-z0-9>_+\\-*]+)",
           "i"
         ),
         context: "HGVS cDNA variant",
@@ -1046,7 +1053,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
         // B. HGVS protein change: p.Gly12Cys, p.G12C, p.Arg248Trp, p.Gln1756fs, p.Trp53*
         // Covers 1-letter (p.G12C) and 3-letter (p.Gly12Cys) amino acid codes
         pattern: new RegExp(
-          flexEscaped + "[\\s\\S]{0,60}?(p\\.[a-z]{1,3}\\d+[a-z*][a-z0-9*]*)",
+          flexEscaped + NB + "{0,30}?(p\\.[a-z]{1,3}\\d+[a-z*][a-z0-9*]*)",
           "i"
         ),
         context: "HGVS protein change",
@@ -1070,8 +1077,9 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
         // Anchored to biomarker name to avoid false matches (e.g. TNM T2 → not a mutation).
         // Requires 2–4 digits to prevent false positives on clinical abbreviations like
         // "A1c" (Hemoglobin A1c) or "T2a" (TNM stage) which have only a single digit.
+        // NB class caps at 20 chars — mutation codes appear directly after gene name.
         pattern: new RegExp(
-          flexEscaped + "[\\s\\S]{0,40}?(?<![a-z])([a-z]\\d{2,4}[a-z](?:fs|del|ins)?)(?![a-z0-9])",
+          flexEscaped + NB + "{0,20}?(?<![a-z])([a-z]\\d{2,4}[a-z](?:fs|del|ins)?)(?![a-z0-9])",
           "i"
         ),
         context: "alphanumeric mutation code",
@@ -1081,7 +1089,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
       {
         // E. Exon structural variant: exon 19 deletion, exon 20 insertion, exon 11 skipping
         pattern: new RegExp(
-          flexEscaped + "[\\s\\S]{0,50}?(exon\\s+\\d+(?:\\s*[-\\u2013]\\s*\\d+)?\\s+(?:deletion|insertion|duplication|skipping|mutation))",
+          flexEscaped + NB + "{0,30}?(exon\\s+\\d+(?:\\s*[-\\u2013]\\s*\\d+)?\\s+(?:deletion|insertion|duplication|skipping|mutation))",
           "i"
         ),
         context: "exon structural variant",
@@ -1091,7 +1099,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
       {
         // F. Copy number: copy number gain/loss, CN 8, high-level amplification, focal amplification
         pattern: new RegExp(
-          flexEscaped + "[\\s\\S]{0,50}?(copy\\s+number\\s+(?:gain|loss|amplification|neutral|increase|decrease)|high[-\\s]level\\s+amplification|focal\\s+amplification|cn\\s+\\d+)",
+          flexEscaped + NB + "{0,30}?(copy\\s+number\\s+(?:gain|loss|amplification|neutral|increase|decrease)|high[-\\s]level\\s+amplification|focal\\s+amplification|cn\\s+\\d+)",
           "i"
         ),
         context: "copy number",
@@ -1101,7 +1109,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
       {
         // G. IHC score: 1+, 2+, 3+ (with optional space before +), Allred score 6/8
         pattern: new RegExp(
-          flexEscaped + "[\\s\\S]{0,40}?([0-3]\\s*\\+|allred\\s+score\\s+\\d+(?:\\/8)?)",
+          flexEscaped + NB + "{0,20}?([0-3]\\s*\\+|allred\\s+score\\s+\\d+(?:\\/8)?)",
           "i"
         ),
         context: "IHC score",
@@ -1111,7 +1119,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
       {
         // H. Chromosomal aberration: del(17p), gain(1q), loss of heterozygosity, LOH
         pattern: new RegExp(
-          flexEscaped + "[\\s\\S]{0,50}?((?:del|gain|loss|amp)\\s*\\(\\d+[pq]\\d*\\)|loss\\s+of\\s+heterozygosity|\\bloh\\b)",
+          flexEscaped + NB + "{0,30}?((?:del|gain|loss|amp)\\s*\\(\\d+[pq]\\d*\\)|loss\\s+of\\s+heterozygosity|\\bloh\\b)",
           "i"
         ),
         context: "chromosomal aberration",
@@ -1122,7 +1130,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
         // I. MSI/MMR molecular status: MSI-H, MSI-L, MSS, dMMR, pMMR
         // Used as fallback when querying an unknown biomarker that happens to report MSI/MMR
         pattern: new RegExp(
-          flexEscaped + "[\\s\\S]{0,50}?(msi[-\\s]?(?:high|low|h|l)|\\bmss\\b|[dp]mmr|microsatellite\\s+(?:instability|stable|unstable))",
+          flexEscaped + NB + "{0,30}?(msi[-\\s]?(?:high|low|h|l)|\\bmss\\b|[dp]mmr|microsatellite\\s+(?:instability|stable|unstable))",
           "i"
         ),
         context: "MSI/MMR status",
@@ -1141,7 +1149,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
         // 1. Comparison: "< 0.1 ng/mL", "> 4.0", "less than 5", "greater than 10"
         // Uses flexEscaped so "prostat vol" pattern still fires on "prostate volume: ..." context
         pattern: new RegExp(
-          flexEscaped + "[\\s\\S]{0,50}?((?:less\\s+than|below|under|<\\s*)\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?|(?:greater\\s+than|above|over|>\\s*)\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
+          flexEscaped + NB + "{0,50}?((?:less\\s+than|below|under|<\\s*)\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?|(?:greater\\s+than|above|over|>\\s*)\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
           "i"
         ),
         context: "comparison threshold",
@@ -1158,7 +1166,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
       {
         // 2. Ratio / fraction: "3/10 cores", "2 of 12"
         pattern: new RegExp(
-          flexEscaped + "[\\s\\S]{0,50}?(\\d+\\s*\\/\\s*\\d+(?:\\s+(?:cores|cells|fields|samples|specimens|lymph\\s+nodes))?)",
+          flexEscaped + NB + "{0,50}?(\\d+\\s*\\/\\s*\\d+(?:\\s+(?:cores|cells|fields|samples|specimens|lymph\\s+nodes))?)",
           "i"
         ),
         context: "ratio or fraction",
@@ -1186,7 +1194,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
         // 4a. Numeric range: "Ferritin 45-120 ng/mL", "value 3.2–5.0"
         // Must come BEFORE bare numeric so "45-120" doesn't get truncated to "45".
         pattern: new RegExp(
-          flexEscaped + "[\\s\\S]{0,60}?(\\d+(?:\\.\\d+)?\\s*[-\u2013]\\s*\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
+          flexEscaped + NB + "{0,60}?(\\d+(?:\\.\\d+)?\\s*[-\u2013]\\s*\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
           "i"
         ),
         context: "numeric range",
@@ -1197,7 +1205,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
         // 4b. OR-alternative readings: "CD4 count 200 or 300 cells/uL"
         // Captures two numeric readings linked by "or".
         pattern: new RegExp(
-          flexEscaped + "[\\s\\S]{0,60}?(\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?\\s+or\\s+\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
+          flexEscaped + NB + "{0,60}?(\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?\\s+or\\s+\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
           "i"
         ),
         context: "OR alternative readings",
@@ -1207,7 +1215,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
       {
         // 4. Numeric + unit
         pattern: new RegExp(
-          flexEscaped + "[\\s\\S]{0,60}?(\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
+          flexEscaped + NB + "{0,60}?(\\d+(?:\\.\\d+)?\\s*(?:" + units + ")?)",
           "i"
         ),
         context: "numeric value with optional unit",
@@ -1217,7 +1225,7 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
       {
         // 5. Categorical status
         pattern: new RegExp(
-          flexEscaped + "[\\s\\S]{0,50}?(positive|negative|detected|not\\s+detected|mutated|wild[-\\s]?type|amplified|not\\s+amplified|high|low|equivocal|absent|present|elevated|normal)",
+          flexEscaped + NB + "{0,50}?(positive|negative|detected|not\\s+detected|mutated|wild[-\\s]?type|amplified|not\\s+amplified|high|low|equivocal|absent|present|elevated|normal)",
           "i"
         ),
         context: "categorical status",

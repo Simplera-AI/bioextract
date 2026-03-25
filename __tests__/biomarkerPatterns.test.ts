@@ -748,6 +748,38 @@ describe("BP3: Pattern D false positive prevention (A1c)", () => {
   });
 });
 
+describe("Cross-boundary contamination: pipe-separated molecular profiles", () => {
+  it("TP53 query does NOT capture BRCA2 c.1813delA from pipe-separated list", () => {
+    // Critical regression: "TP53 G245S | BRCA2 c.1813delA | TP53 R273H"
+    // TP53 patterns must not cross the '|' delimiter to grab BRCA2's HGVS notation.
+    const result = extractBiomarker(
+      "Molecular profile: TP53 G245S | BRCA2 c.1813delA | TP53 R273H",
+      "TP53"
+    );
+    expect(result).not.toBeNull();
+    // Must contain a TP53 mutation (G245S or R273H), NOT c.1813delA (BRCA2's mutation)
+    expect(result!.value.toLowerCase()).not.toContain("c.1813");
+    expect(result!.value.toUpperCase()).toMatch(/G245S|R273H/);
+  });
+
+  it("BRCA2 query captures c.1813delA, not TP53 mutations", () => {
+    const result = extractBiomarker(
+      "Molecular profile: TP53 G245S | BRCA2 c.1813delA | TP53 R273H",
+      "BRCA2"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("c.1813");
+  });
+
+  it("numeric value not grabbed from adjacent pipe-separated entry", () => {
+    // "Ferritin 45 | Hemoglobin 12.5 g/dL" — Ferritin query should get 45, not 12.5
+    const result = extractBiomarker("Ferritin 45 | Hemoglobin 12.5 g/dL", "Ferritin");
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/^45/);
+    expect(result!.value).not.toMatch(/12\.5/);
+  });
+});
+
 describe("BP9: Header/disclaimer skip phrases", () => {
   it("skips 'reference range' value, extracts actual result from PSA", () => {
     // "PSA Reference Range: 0-4 ng/mL. PSA: 12.4 ng/mL." — should extract 12.4, not 0 or 4

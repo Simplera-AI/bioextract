@@ -72,6 +72,12 @@ export interface ExtractionProgress {
   processed: number;
   total: number;
   percent: number;
+  /** Current extraction phase */
+  phase: "scanning" | "enriching";
+  /** AI requests completed (Phase 2) */
+  aiProcessed: number;
+  /** Total AI requests to make (Phase 2) */
+  aiTotal: number;
 }
 
 // ─── App State (5-step state machine) ─────────────────────────────────────

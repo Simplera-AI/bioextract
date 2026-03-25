@@ -321,10 +321,10 @@ describe("runBiomarkerExtraction integration", () => {
   });
 
   it("progress callback is called for each row", () => {
-    const calls: number[] = [];
-    runBiomarkerExtraction(clinicalRows, ["ID", "Notes", "Diagnosis"], "Notes", "PSA", (n) => calls.push(n));
-    expect(calls).toHaveLength(5);
-    expect(calls[4]).toBe(5);
+    const processed: number[] = [];
+    runBiomarkerExtraction(clinicalRows, ["ID", "Notes", "Diagnosis"], "Notes", "PSA", (u) => processed.push(u.processed));
+    expect(processed).toHaveLength(5);
+    expect(processed[4]).toBe(5);
   });
 });
 

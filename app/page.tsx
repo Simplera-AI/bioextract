@@ -21,6 +21,7 @@ import type {
   ParsedFile,
   SheetData,
   ExtractionOutput,
+  ExtractionProgress as ExtractionProgressState,
 } from "@/lib/types";
 
 // ─── Step definitions ─────────────────────────────────────────────────────
@@ -44,7 +45,7 @@ const INITIAL_STATE: AppState = {
   selectedColumn: null,
   biomarkerQuery: "",
   extractionStatus: "idle",
-  progress: { processed: 0, total: 0, percent: 0 },
+  progress: { processed: 0, total: 0, percent: 0, phase: "scanning", aiProcessed: 0, aiTotal: 0 },
   output: null,
   extractionError: null,
   activeStep: 1,
@@ -130,16 +131,15 @@ export default function HomePage() {
       ...s,
       extractionStatus: "running",
       activeStep: 4,
-      progress: { processed: 0, total, percent: 0 },
+      progress: { processed: 0, total, percent: 0, phase: "scanning", aiProcessed: 0, aiTotal: 0 },
       extractionError: null,
     }));
 
     // Use setTimeout to allow React to re-render the progress UI before extraction starts
     const aiEnabled = process.env.NEXT_PUBLIC_AI_ENRICHMENT === "true";
     setTimeout(() => {
-      const onProgress = (processed: number) => {
-        const percent = Math.round((processed / total) * 100);
-        setState((s) => ({ ...s, progress: { processed, total, percent } }));
+      const onProgress = (update: ExtractionProgressState) => {
+        setState((s) => ({ ...s, progress: update }));
       };
 
       const run: Promise<ExtractionOutput> = aiEnabled

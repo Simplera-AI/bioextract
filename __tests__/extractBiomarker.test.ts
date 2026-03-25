@@ -364,9 +364,9 @@ describe("runBiomarkerExtraction", () => {
   });
 
   it("calls onProgress for each row", () => {
-    const calls: number[] = [];
-    runBiomarkerExtraction(rows, originalHeaders, "ClinicalNotes", "PSA", (n) => calls.push(n));
-    expect(calls).toEqual([1, 2, 3, 4, 5]);
+    const processed: number[] = [];
+    runBiomarkerExtraction(rows, originalHeaders, "ClinicalNotes", "PSA", (u) => processed.push(u.processed));
+    expect(processed).toEqual([1, 2, 3, 4, 5]);
   });
 
   it("original row fields are preserved in output", () => {

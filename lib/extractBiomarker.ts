@@ -28,6 +28,7 @@ import type {
   BiomarkerExtractionResult,
   BiomarkerValueType,
   ExtractionOutput,
+  ExtractionProgress,
   ExtractionStats,
 } from "./types";
 
@@ -561,7 +562,7 @@ export function runBiomarkerExtraction(
   originalHeaders: string[],
   selectedColumn: string,
   biomarkerQuery: string,
-  onProgress?: (processed: number) => void
+  onProgress?: (update: ExtractionProgress) => void
 ): ExtractionOutput {
   const startTime = Date.now();
   const trimmedQuery = biomarkerQuery.trim();
@@ -578,7 +579,7 @@ export function runBiomarkerExtraction(
     const cellText = row[selectedColumn] ?? "";
     const result = extractBiomarker(cellText, trimmedQuery);
 
-    onProgress?.(i + 1);
+    onProgress?.({ processed: i + 1, total: rows.length, percent: Math.round(((i + 1) / rows.length) * 100), phase: "scanning", aiProcessed: 0, aiTotal: 0 });
 
     if (!result) {
       notFoundCount++;
@@ -698,7 +699,7 @@ export async function runBiomarkerExtractionAsync(
   originalHeaders: string[],
   selectedColumn: string,
   biomarkerQuery: string,
-  onProgress?: (processed: number) => void
+  onProgress?: (update: ExtractionProgress) => void
 ): Promise<ExtractionOutput> {
   const startTime = Date.now();
   const trimmedQuery = biomarkerQuery.trim();
@@ -735,7 +736,7 @@ export async function runBiomarkerExtractionAsync(
     }
 
     const needsEnrich =
-      aiEnabled && isFallback &&
+      aiEnabled && isFallback && text.trim() !== "" &&
       (ruleResult === null || isBareNumeric(ruleResult.value));
 
     const needsValidate =
@@ -743,7 +744,9 @@ export async function runBiomarkerExtractionAsync(
       ruleResult.confidence !== "high" &&
       text.includes("|");
 
-    onProgress?.(i + 1);
+    // Phase 1 contributes 0→10% when AI is likely (isFallback+aiEnabled), else 0→100%
+    const phase1Scale = isFallback && aiEnabled ? 10 : 100;
+    onProgress?.({ processed: i + 1, total: rows.length, percent: Math.round(((i + 1) / rows.length) * phase1Scale), phase: "scanning", aiProcessed: 0, aiTotal: 0 });
     return { row, text, ruleResult, needsEnrich, needsValidate };
   });
 
@@ -756,12 +759,28 @@ export async function runBiomarkerExtractionAsync(
   const enrichIdxs   = meta.map((m, i) => (m.needsEnrich   ? i : -1)).filter(i => i >= 0);
   const validateIdxs = meta.map((m, i) => (m.needsValidate ? i : -1)).filter(i => i >= 0);
 
+  const total = rows.length;
+  const aiTotal = enrichIdxs.length + validateIdxs.length;
+  let aiCompleted = 0;
+
+  // If Phase 1 scaled to 10% but no AI is needed, jump straight to 100%
+  if (aiTotal === 0 && isFallback && aiEnabled) {
+    onProgress?.({ processed: total, total, percent: 100, phase: "scanning", aiProcessed: 0, aiTotal: 0 });
+  }
+
+  // Helper to report Phase 2 progress (10→100% across all AI calls)
+  function reportAI() {
+    onProgress?.({ processed: total, total, percent: Math.round(10 + (aiCompleted / aiTotal) * 90), phase: "enriching", aiProcessed: aiCompleted, aiTotal });
+  }
+
   // Enrichment sweep — runs first so validation can use the enriched result
   for (let b = 0; b < enrichIdxs.length; b += AI_BATCH_SIZE) {
     await Promise.all(
       enrichIdxs.slice(b, b + AI_BATCH_SIZE).map(async idx => {
         const enrichment = await enrichWithAI(trimmedQuery, meta[idx].text, meta[idx].ruleResult, true);
         enrichMap.set(idx, enrichment);
+        aiCompleted++;
+        reportAI();
       })
     );
   }
@@ -771,9 +790,11 @@ export async function runBiomarkerExtractionAsync(
     await Promise.all(
       validateIdxs.slice(b, b + AI_BATCH_SIZE).map(async idx => {
         const result = enrichMap.get(idx)?.result ?? meta[idx].ruleResult;
-        if (!result) return;
+        if (!result) { aiCompleted++; reportAI(); return; }
         const { valid } = await validateAttribution(trimmedQuery, result.value, meta[idx].text);
         validMap.set(idx, valid);
+        aiCompleted++;
+        reportAI();
       })
     );
   }

@@ -23,6 +23,7 @@ import {
   type ValueCapturePattern,
 } from "./biomarkerPatterns";
 import { enrichWithAI } from "./aiEnrichment";
+import { hasAttributionRisk, validateAttribution } from "./aiValidation";
 import type {
   BiomarkerExtractionResult,
   BiomarkerValueType,
@@ -600,10 +601,22 @@ export function runBiomarkerExtraction(
 // ─── Async variants with optional AI enrichment ──────────────────────────────
 
 /**
- * Async variant of extractBiomarker.
- * For known biomarkers: identical to the sync version.
- * For unknown biomarkers (fallback pattern): optionally calls AI enrichment when
- *   NEXT_PUBLIC_AI_ENRICHMENT=true and the rule result is null or bare-numeric.
+ * Async variant of extractBiomarker with two AI-powered enhancements:
+ *
+ * Step 1 — Enrichment (unknown biomarkers only):
+ *   When the biomarker is not in the known pattern library AND the rule result
+ *   is null or bare-numeric (likely misread an alphanumeric code), call Claude
+ *   Haiku to extract the value directly from the context text.
+ *   Gated by: NEXT_PUBLIC_AI_ENRICHMENT=true
+ *
+ * Step 2 — Attribution Validation (all biomarkers):
+ *   When AI is enabled AND the text contains multiple biomarker names (e.g.
+ *   pipe-separated molecular profiles like "TP53 G245S | BRCA2 c.1813delA"),
+ *   ask Claude Haiku: "Does this value actually belong to the queried biomarker?"
+ *   If AI is confident the value belongs to a DIFFERENT biomarker, the result
+ *   is discarded (returns null) — preventing cross-biomarker contamination.
+ *   This fires for BOTH known (PSA, KRAS, etc.) and unknown biomarkers.
+ *   Fail-safe: any timeout, error, or uncertain response keeps the result.
  */
 export async function extractBiomarkerAsync(
   text: string,
@@ -611,9 +624,32 @@ export async function extractBiomarkerAsync(
 ): Promise<BiomarkerExtractionResult | null> {
   const isFallback = getBiomarkerPattern(biomarkerQuery) === null;
   const ruleResult = extractBiomarker(text, biomarkerQuery);
-  if (!isFallback) return ruleResult;
-  const { result } = await enrichWithAI(biomarkerQuery, text, ruleResult, isFallback);
-  return result;
+
+  // Step 1: AI enrichment for unknown biomarkers with null / bare-numeric results
+  let finalResult = ruleResult;
+  let markedAiEnriched = false;
+  if (isFallback) {
+    const enrichment = await enrichWithAI(biomarkerQuery, text, ruleResult, isFallback);
+    finalResult = enrichment.result;
+    markedAiEnriched = enrichment.aiEnriched;
+  }
+
+  // Step 2: Attribution validation — fires for ALL biomarkers (known + unknown)
+  // when AI is enabled AND the text has multiple biomarker names that could
+  // cause the rule engine to grab the wrong biomarker's value.
+  if (
+    finalResult &&
+    process.env.NEXT_PUBLIC_AI_ENRICHMENT === "true" &&
+    hasAttributionRisk(text, biomarkerQuery)
+  ) {
+    const { valid } = await validateAttribution(biomarkerQuery, finalResult.value, text);
+    if (!valid) return null; // AI confirmed wrong attribution — discard
+  }
+
+  if (markedAiEnriched && finalResult) {
+    return { ...finalResult, aiEnriched: true };
+  }
+  return finalResult;
 }
 
 /**

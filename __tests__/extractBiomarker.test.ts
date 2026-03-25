@@ -854,3 +854,42 @@ describe("Narrative patterns — Feature 3", () => {
     expect(result!.value).toMatch(/245/);
   });
 });
+
+// ─── Attribution Validation — hasAttributionRisk unit tests ──────────────────
+
+import { hasAttributionRisk } from "../lib/aiValidation";
+
+describe("hasAttributionRisk — attribution risk detection", () => {
+  it("detects pipe-separated molecular profile as high risk", () => {
+    expect(
+      hasAttributionRisk("TP53 G245S | BRCA2 c.1813delA | TP53 R273H", "TP53")
+    ).toBe(true);
+  });
+
+  it("detects another known gene symbol as risk (prose text)", () => {
+    expect(
+      hasAttributionRisk(
+        "TP53 mutation confirmed. BRCA2 pathogenic variant c.1813delA also detected.",
+        "TP53"
+      )
+    ).toBe(true);
+  });
+
+  it("returns false for simple single-biomarker text", () => {
+    expect(
+      hasAttributionRisk("PSA was 4.2 ng/mL today.", "PSA")
+    ).toBe(false);
+  });
+
+  it("returns false when the only other 'symbol' is the queried biomarker itself", () => {
+    expect(
+      hasAttributionRisk("PSA level 4.2. PSA rose to 8.4.", "PSA")
+    ).toBe(false);
+  });
+
+  it("detects CA-125 alongside AFP as risk", () => {
+    expect(
+      hasAttributionRisk("CA-125 412 U/mL | AFP 6.2 ng/mL | LDH 180 U/L", "CA-125")
+    ).toBe(true);
+  });
+});

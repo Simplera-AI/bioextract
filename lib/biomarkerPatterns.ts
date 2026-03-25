@@ -1026,7 +1026,9 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
   // delimiters that separate different biomarker entries in structured molecular profiles.
   // e.g. "TP53 G245S | BRCA2 c.1813delA" — TP53 patterns must not cross the "|" to grab BRCA2's value.
   // Note: use \n (actual char) in character class — regex engine handles it correctly.
-  const NB = "[^|\\n\\r;]"; // no-boundary char class (string fragment for RegExp constructor)
+  const NB = "[^|\\n\\r;,]"; // no-boundary char class — blocks pipe, newline, semicolon, AND comma.
+  // Comma is critical: comma-separated molecular profiles ("TP53 frameshift, RAD51C biallelic")
+  // must not let patterns bleed from one gene entry into the next.
 
   return {
     name: biomarkerName,
@@ -1143,6 +1145,24 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
           if (/^dmmr/i.test(r)) return "dMMR";
           if (/^pmmr/i.test(r)) return "pMMR";
           return raw.trim().toUpperCase();
+        },
+      },
+      {
+        // J. Molecular/genomic alteration status
+        // Captures genomic outcome terms not covered by copy-number (F) or chromosomal (H) patterns.
+        // Examples: "TP53 biallelic loss", "TP53 frameshift", "MYC amplification",
+        //           "ALK rearrangement", "PTEN loss of function", "EGFR truncating mutation"
+        // Window capped at 40 chars — these terms appear directly after the gene name.
+        // Must come BEFORE numeric patterns so "biallelic loss" / "frameshift" beat bare digits.
+        pattern: new RegExp(
+          flexEscaped + NB + "{0,40}?(biallelic\\s+loss|monoallelic\\s+loss|biallelic|monoallelic|frameshift|truncat(?:ion|ing|ed)(?:\\s+mutation)?|loss\\s+of\\s+function|\\blof\\b|splice\\s+(?:site|donor|acceptor)(?:\\s+(?:mutation|variant))?|stop[-\\s]?(?:gain|codon|mutation|lost)|nonsense(?:\\s+mutation)?|inactivat(?:ing|ion)(?:\\s+mutation)?|\\bamplification\\b|\\bamplifie?d\\b|\\bdeletion\\b|rearrangement)",
+          "i"
+        ),
+        context: "molecular/genomic alteration status",
+        valueType: "categorical",
+        transform: (raw) => {
+          const r = raw.trim();
+          return r.charAt(0).toUpperCase() + r.slice(1);
         },
       },
       {

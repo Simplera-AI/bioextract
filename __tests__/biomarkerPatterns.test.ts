@@ -337,9 +337,9 @@ describe("buildFallbackPattern", () => {
     expect(p.aliases).toContain("ferritin");
   });
 
-  it("fallback pattern has expected valuePatterns (A-I + 1,2,3,4a,4b,4,5,6)", () => {
+  it("fallback pattern has expected valuePatterns (A-I + J + 1,2,3,4a,4b,4,5,6)", () => {
     const p = buildFallbackPattern("Ferritin");
-    expect(p.valuePatterns.length).toBe(17);
+    expect(p.valuePatterns.length).toBe(18);
   });
 
   it("fallback pattern extracts numeric value", () => {
@@ -790,5 +790,60 @@ describe("BP9: Header/disclaimer skip phrases", () => {
     expect(result).not.toBeNull();
     expect(result!.value).toMatch(/12\.4/);
     expect(result!.value).not.toMatch(/^0[-–]4/);
+  });
+});
+
+// ─── Pattern J: Molecular/Genomic Alteration Status ──────────────────────────
+
+describe("Pattern J: molecular/genomic alteration status (biallelic, frameshift, etc.)", () => {
+  it("extracts 'biallelic loss' for TP53 in liquid biopsy report", () => {
+    // Regression: was returning '3' from 'SBS3' in the next line
+    const text = [
+      "Allele-specific copy number: TP53 biallelic loss",
+      "Mutational signature: SBS3 (HRD) high contribution",
+      "Tumour purity estimate 68%",
+    ].join("\n");
+    const result = extractBiomarker(text, "TP53");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("biallelic");
+    expect(result!.value).not.toBe("3");
+  });
+
+  it("extracts 'frameshift' for TP53 in comma-separated molecular profile", () => {
+    // Regression: was returning '51' from 'RAD51C' after the comma
+    const text =
+      "molecular: EGFR exon 20 ins, MET amplification, TP53 frameshift, RAD51C biallelic, MYC amplification";
+    const result = extractBiomarker(text, "TP53");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("frameshift");
+    expect(result!.value).not.toBe("51");
+  });
+
+  it("extracts 'amplification' for MYC in comma-separated molecular profile", () => {
+    const text = "molecular: TP53 frameshift, RAD51C biallelic, MYC amplification";
+    const result = extractBiomarker(text, "MYC");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("amplification");
+  });
+
+  it("comma-separated profile: RAD51C query extracts 'biallelic', not TP53's frameshift", () => {
+    const text =
+      "molecular: TP53 frameshift, RAD51C biallelic, MYC amplification";
+    const result = extractBiomarker(text, "RAD51C");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("biallelic");
+    expect(result!.value.toLowerCase()).not.toContain("frameshift");
+  });
+
+  it("extracts 'amplification' for standalone marker", () => {
+    const result = extractBiomarker("MET amplification confirmed by FISH.", "MET");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("amplification");
+  });
+
+  it("extracts 'loss of function' status", () => {
+    const result = extractBiomarker("PTEN loss of function detected.", "PTEN");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("loss of function");
   });
 });

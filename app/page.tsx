@@ -307,7 +307,7 @@ export default function HomePage() {
                 <StepHeader
                   icon={<Zap className="h-5 w-5" />}
                   title="Extracting biomarker values"
-                  description="Processing entirely in your browser — no data leaves your device"
+                  description="Analyzing your clinical data"
                 />
                 {extractionStatus === "error" ? (
                   <div className="rounded-xl border border-red-200 dark:border-red-800/50 bg-red-50 dark:bg-red-950/30 p-4">
@@ -351,8 +351,7 @@ export default function HomePage() {
 
         {/* Footer note */}
         <p className="mt-6 text-center text-xs text-gray-400 dark:text-slate-600">
-          BioExtract processes all data locally in your browser. No files are uploaded to any server.
-          &nbsp;&middot;&nbsp; <span className="text-teal-500">Simplera AI</span>
+          <span className="text-teal-500">Simplera AI</span>
         </p>
       </main>
     </div>

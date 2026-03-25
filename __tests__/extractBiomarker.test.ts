@@ -866,13 +866,15 @@ describe("hasAttributionRisk — attribution risk detection", () => {
     ).toBe(true);
   });
 
-  it("detects another known gene symbol as risk (prose text)", () => {
+  it("returns false for prose text with multiple biomarker names but no pipe separator", () => {
+    // Attribution validation is pipe-only now — prose notes with two biomarker names
+    // are handled correctly by the rule engine's anchor-based patterns.
     expect(
       hasAttributionRisk(
         "TP53 mutation confirmed. BRCA2 pathogenic variant c.1813delA also detected.",
         "TP53"
       )
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("returns false for simple single-biomarker text", () => {

@@ -40,10 +40,6 @@ export default function ExtractionProgress({
         />
       </div>
 
-      <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-slate-500">
-        <div className="h-1.5 w-1.5 rounded-full bg-teal-400 animate-pulse" />
-        Processing entirely in your browser &mdash; no data sent to any server
-      </div>
     </div>
   );
 }

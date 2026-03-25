@@ -622,6 +622,7 @@ export async function extractBiomarkerAsync(
   text: string,
   biomarkerQuery: string
 ): Promise<BiomarkerExtractionResult | null> {
+  if (!text?.trim() || !biomarkerQuery?.trim()) return null;
   const isFallback = getBiomarkerPattern(biomarkerQuery) === null;
   const ruleResult = extractBiomarker(text, biomarkerQuery);
 
@@ -634,11 +635,15 @@ export async function extractBiomarkerAsync(
     markedAiEnriched = enrichment.aiEnriched;
   }
 
-  // Step 2: Attribution validation — fires for ALL biomarkers (known + unknown)
-  // when AI is enabled AND the text has multiple biomarker names that could
-  // cause the rule engine to grab the wrong biomarker's value.
+  // Step 2: Attribution validation — only fires when:
+  //   • AI is enabled
+  //   • text has pipe-separated profiles (genuine cross-contamination risk)
+  //   • result confidence is NOT "high" — high-confidence extractions from known
+  //     anchor-based patterns rarely misattribute; skipping saves the majority of
+  //     API calls and restores near-instant speed for well-matched biomarkers.
   if (
     finalResult &&
+    finalResult.confidence !== "high" &&
     process.env.NEXT_PUBLIC_AI_ENRICHMENT === "true" &&
     hasAttributionRisk(text, biomarkerQuery)
   ) {
@@ -653,10 +658,31 @@ export async function extractBiomarkerAsync(
 }
 
 /**
- * Async variant of runBiomarkerExtraction with optional AI enrichment per row.
- * Falls back to sync extractBiomarker for known biomarkers (no extra latency).
- * Tracks how many rows were AI-enriched in stats.aiEnrichedCount.
+ * Two-phase async extraction with deduplication cache.
+ *
+ * Phase 1 — Rule engine (sync, all rows at once, no network):
+ *   Every row is run through extractBiomarker() synchronously.
+ *   A text-level dedup cache means repeated cell text (very common in clinical
+ *   datasets — templated notes, copy-paste entries) is only processed once.
+ *   For known biomarkers (PSA, KRAS, etc.) with high-confidence results,
+ *   Phase 2 is entirely skipped → near-instant completion.
+ *
+ * Phase 2 — AI (only rows that genuinely need it, fully parallelised):
+ *   • Enrichment: unknown biomarker AND rule result is null/bare-numeric
+ *   • Validation: pipe-separated text AND confidence is not "high"
+ *   Rows are batched AI_BATCH_SIZE at a time; both enrichment and validation
+ *   run as separate parallel sweeps to maximise throughput.
+ *
+ * Tier 2 API account: 4,000 RPM (~66 RPS) — AI_BATCH_SIZE=50 is well within limits.
+ * Tier 1 API account: lower AI_BATCH_SIZE to 15.
  */
+const AI_BATCH_SIZE = 50;
+
+// Bare-number check replicating aiEnrichment.shouldEnrich logic (avoids cross-module import)
+function isBareNumeric(value: string): boolean {
+  return /^\d+(\.\d+)?$/.test(value.trim());
+}
+
 export async function runBiomarkerExtractionAsync(
   rows: Record<string, string>[],
   originalHeaders: string[],
@@ -670,35 +696,102 @@ export async function runBiomarkerExtractionAsync(
   const evidenceCol = trimmedQuery + " Evidence";
   const headersOut = [...originalHeaders, valueCol, evidenceCol];
 
+  const isFallback = getBiomarkerPattern(trimmedQuery) === null;
+  const aiEnabled = process.env.NEXT_PUBLIC_AI_ENRICHMENT === "true";
+
+  // ── Phase 1: Rule engine — synchronous, all rows, no network ─────────────
+  // Dedup cache: same cell text → reuse rule result.
+  // Clinical datasets regularly repeat the same note text; cache turns
+  // 100k rows with 20k unique texts into 20k rule-engine calls instead of 100k.
+  const ruleCache = new Map<string, BiomarkerExtractionResult | null>();
+
+  type RowMeta = {
+    row: Record<string, string>;
+    text: string;
+    ruleResult: BiomarkerExtractionResult | null;
+    needsEnrich: boolean;
+    needsValidate: boolean;
+  };
+
+  const meta: RowMeta[] = rows.map((row, i) => {
+    const text = row[selectedColumn] ?? "";
+
+    let ruleResult: BiomarkerExtractionResult | null;
+    if (ruleCache.has(text)) {
+      ruleResult = ruleCache.get(text) ?? null;
+    } else {
+      ruleResult = extractBiomarker(text, trimmedQuery);
+      ruleCache.set(text, ruleResult);
+    }
+
+    const needsEnrich =
+      aiEnabled && isFallback &&
+      (ruleResult === null || isBareNumeric(ruleResult.value));
+
+    const needsValidate =
+      aiEnabled && ruleResult !== null &&
+      ruleResult.confidence !== "high" &&
+      text.includes("|");
+
+    onProgress?.(i + 1);
+    return { row, text, ruleResult, needsEnrich, needsValidate };
+  });
+
+  // ── Phase 2: AI — only the subset that needs it ───────────────────────────
+  // enrichMap: idx → enriched result
+  // validMap:  idx → false means discard (AI confirmed wrong attribution)
+  const enrichMap = new Map<number, { result: BiomarkerExtractionResult | null; aiEnriched: boolean }>();
+  const validMap  = new Map<number, boolean>();
+
+  const enrichIdxs   = meta.map((m, i) => (m.needsEnrich   ? i : -1)).filter(i => i >= 0);
+  const validateIdxs = meta.map((m, i) => (m.needsValidate ? i : -1)).filter(i => i >= 0);
+
+  // Enrichment sweep — runs first so validation can use the enriched result
+  for (let b = 0; b < enrichIdxs.length; b += AI_BATCH_SIZE) {
+    await Promise.all(
+      enrichIdxs.slice(b, b + AI_BATCH_SIZE).map(async idx => {
+        const enrichment = await enrichWithAI(trimmedQuery, meta[idx].text, meta[idx].ruleResult, true);
+        enrichMap.set(idx, enrichment);
+      })
+    );
+  }
+
+  // Validation sweep — uses post-enrichment result where available
+  for (let b = 0; b < validateIdxs.length; b += AI_BATCH_SIZE) {
+    await Promise.all(
+      validateIdxs.slice(b, b + AI_BATCH_SIZE).map(async idx => {
+        const result = enrichMap.get(idx)?.result ?? meta[idx].ruleResult;
+        if (!result) return;
+        const { valid } = await validateAttribution(trimmedQuery, result.value, meta[idx].text);
+        validMap.set(idx, valid);
+      })
+    );
+  }
+
+  // ── Phase 3: Merge and compute stats ─────────────────────────────────────
   let foundCount = 0;
   let notFoundCount = 0;
   let pendingCount = 0;
   let aiEnrichedCount = 0;
 
-  const rowsOut: Record<string, string>[] = [];
+  const rowsOut: Record<string, string>[] = meta.map(({ row, ruleResult }, idx) => {
+    const enriched = enrichMap.get(idx);
+    let result: BiomarkerExtractionResult | null = enriched?.result ?? ruleResult;
 
-  for (let i = 0; i < rows.length; i++) {
-    const cellText = rows[i][selectedColumn] ?? "";
-    const result = await extractBiomarkerAsync(cellText, trimmedQuery);
-
-    onProgress?.(i + 1);
+    // Discard if attribution validation rejected this result
+    if (validMap.get(idx) === false) result = null;
 
     if (!result) {
       notFoundCount++;
-      rowsOut.push({ ...rows[i], [valueCol]: "", [evidenceCol]: "" });
-      continue;
+      return { ...row, [valueCol]: "", [evidenceCol]: "" };
     }
 
     if (result.valueType === "pending") pendingCount++;
     else foundCount++;
-    if (result.aiEnriched) aiEnrichedCount++;
+    if (enriched?.aiEnriched) aiEnrichedCount++;
 
-    rowsOut.push({
-      ...rows[i],
-      [valueCol]: result.value,
-      [evidenceCol]: result.evidence,
-    });
-  }
+    return { ...row, [valueCol]: result.value, [evidenceCol]: result.evidence };
+  });
 
   const stats: ExtractionStats = {
     totalRows: rows.length,

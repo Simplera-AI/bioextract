@@ -2,11 +2,13 @@
 # BioExtract — Clinical Biomarker Extraction Tool
 # ============================================================================
 # Build:  docker build -t shreshtap/bioextract .
-# Run:    docker run -p 3000:3000 shreshtap/bioextract
+# Run:    docker run -p 3000:3000 -e BIOEXTRACT_ANTHROPIC_API_KEY=sk-ant-... shreshtap/bioextract
 # Pull:   docker pull shreshtap/bioextract
 # ============================================================================
-# No Python, no medspaCy, no API keys required.
-# 100% client-side — all extraction runs in the browser.
+# Runtime env vars (pass with -e or --env-file at docker run):
+#   BIOEXTRACT_ANTHROPIC_API_KEY  — Anthropic API key (required for AI enrichment)
+# Build args (override with --build-arg):
+#   NEXT_PUBLIC_AI_ENRICHMENT     — baked into client JS; default true
 # ============================================================================
 
 # ── Stage 1: Build ──────────────────────────────────────────────────────────
@@ -18,6 +20,10 @@ COPY package.json package-lock.json* ./
 RUN npm ci --ignore-scripts
 
 COPY . .
+
+# NEXT_PUBLIC_* vars are baked into client JS at build time
+ARG NEXT_PUBLIC_AI_ENRICHMENT=true
+ENV NEXT_PUBLIC_AI_ENRICHMENT=$NEXT_PUBLIC_AI_ENRICHMENT
 
 RUN npm run build
 

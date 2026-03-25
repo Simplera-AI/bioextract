@@ -37,40 +37,12 @@
  * Returns false for simple, single-biomarker texts so validation is never
  * invoked unnecessarily ("PSA was 4.2 ng/mL today" → no risk).
  */
-export function hasAttributionRisk(text: string, biomarkerQuery: string): boolean {
-  // Pipe-separated lists are the strongest signal
-  if (text.includes("|")) return true;
-
-  // Secondary: another known gene/biomarker symbol appears in the same text.
-  // This list covers the most common genomic and clinical biomarkers.
-  // When any of these appear alongside the queried biomarker, multi-attribution risk exists.
-  const lowerText = text.toLowerCase();
-  const lowerQuery = biomarkerQuery.toLowerCase();
-
-  const KNOWN_BIOMARKER_NAMES = [
-    // Oncogenes & tumor suppressors
-    "tp53", "brca1", "brca2", "kras", "braf", "egfr", "alk", "her2", "erbb2",
-    "pik3ca", "pten", "apc", "mlh1", "msh2", "msh6", "pms2", "cdkn2a",
-    "rb1", "vhl", "ret", "met", "ros1", "nras", "hras", "fgfr1", "fgfr2",
-    "fgfr3", "erbb3", "erbb4", "kit", "pdgfra", "akt1", "ctnnb1", "notch1",
-    "stk11", "keap1", "nf1", "nf2", "smad4", "arid1a", "crebbp", "mycn",
-    "myc", "ntrk1", "ntrk2", "ntrk3", "rb1", "atm", "chek2", "palb2",
-    // Clinical biomarkers (known pattern library)
-    "psa", "ki-67", "ki67", "pirads", "pi-rads", "gleason", "birads", "bi-rads",
-    "pd-l1", "pdl1", "msi", "mmr", "tnm", "her2",
-    // Serum markers
-    "ca-125", "ca 125", "ca-15-3", "ca 15-3", "afp", "cea", "ldh",
-    "lag-3", "pd-1",
-  ];
-
-  return KNOWN_BIOMARKER_NAMES.some(
-    (name) =>
-      // Must appear in text
-      lowerText.includes(name) &&
-      // Must NOT be the queried biomarker itself
-      !lowerQuery.includes(name) &&
-      name !== lowerQuery
-  );
+export function hasAttributionRisk(text: string, _biomarkerQuery: string): boolean {
+  // Only trigger for pipe-separated molecular profile lists — the primary source
+  // of cross-biomarker contamination (e.g. "TP53 G245S | BRCA2 c.1813delA").
+  // Prose notes that merely mention two biomarker names in passing are handled
+  // correctly by the rule engine's anchor-based patterns and do not need AI validation.
+  return text.includes("|");
 }
 
 /**

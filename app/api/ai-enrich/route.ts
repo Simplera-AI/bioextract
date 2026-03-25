@@ -12,10 +12,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.BIOEXTRACT_ANTHROPIC_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
-      { error: "AI enrichment not configured (ANTHROPIC_API_KEY not set)" },
+      { error: "AI enrichment not configured (BIOEXTRACT_ANTHROPIC_API_KEY not set)" },
       { status: 503 }
     );
   }

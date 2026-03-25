@@ -9,7 +9,7 @@
  * c.1813delA for a TP53 query. This route answers: does c.1813delA
  * actually belong to TP53, or to BRCA2?
  *
- * Only fires when NEXT_PUBLIC_AI_ENRICHMENT=true AND ANTHROPIC_API_KEY is set.
+ * Only fires when NEXT_PUBLIC_AI_ENRICHMENT=true AND BIOEXTRACT_ANTHROPIC_API_KEY is set.
  * Context truncated to 600 chars (slightly more than enrichment — disambiguation
  * needs broader view to see all biomarkers in the vicinity).
  * Hard 3-second timeout against Anthropic.
@@ -18,10 +18,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.BIOEXTRACT_ANTHROPIC_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
-      { error: "AI validation not configured (ANTHROPIC_API_KEY not set)" },
+      { error: "AI validation not configured (BIOEXTRACT_ANTHROPIC_API_KEY not set)" },
       { status: 503 }
     );
   }

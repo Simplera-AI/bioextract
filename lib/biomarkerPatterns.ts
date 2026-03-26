@@ -406,15 +406,17 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
         transform: (raw) => `HER2 ${raw.trim().replace(/\s+\+$/, "+")}`,
       },
       {
-        // "FISH ratio 2.3"
-        pattern: /(?:fish|ish)\s+(?:ratio|result)[\s:=]*(\d+(?:\.\d+)?)/i,
+        // "FISH ratio 2.3" — also handles "FISH result back: ratio 3.8" (intervening words allowed)
+        pattern: /(?:fish|ish)[\s\S]{0,40}?\bratio[\s:=]*(\d+(?:\.\d+)?)/i,
         context: "HER2 FISH ratio",
         valueType: "numeric",
         transform: (raw) => `FISH ratio ${raw.trim()}`,
       },
       {
-        // "HER2 positive", "HER2 amplified"
-        pattern: /her2[\s\S]{0,30}?(positive|negative|equivocal|amplified|not\s+amplified|\+|-)/i,
+        // "HER2 positive", "HER2 amplified", "HER2+" / "HER2-" (directly attached, no space)
+        // (?<!\s)[+-] prevents matching an em-dash separator like "ratio 3.8 — HER2"
+        // where the dash is normalised to "-" surrounded by spaces.
+        pattern: /her2[\s\S]{0,30}?(positive|negative|equivocal|amplified|not\s+amplified|(?<!\s)[+-])/i,
         context: "HER2 categorical status",
         valueType: "categorical",
         transform: (raw) => {

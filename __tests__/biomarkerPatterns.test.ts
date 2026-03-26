@@ -613,6 +613,31 @@ describe("Bug #8: HER2 IHC allows space before +", () => {
   });
 });
 
+describe("Bug: HER2 FISH 'result back: ratio X' regression", () => {
+  it("extracts FISH ratio from 'HER2 FISH result back: ratio 3.8'", () => {
+    // Real MDT note format: FISH result comes back with ratio on a separate phrase.
+    // Previously the categorical pattern matched the em-dash (\u2014 → '-') at position 29
+    // and returned "Negative" instead of the FISH ratio.
+    const text =
+      "HER2 FISH result back: ratio 3.8 \u2014 HER2 positive. adding trastuzumab to regimen.";
+    const result = extractBiomarker(text, "HER2");
+    expect(result).not.toBeNull();
+    // Should be FISH ratio (more specific), NOT "Negative"
+    expect(result!.value).toMatch(/3\.8|[Pp]ositive/);
+    expect(result!.value.toLowerCase()).not.toBe("negative");
+  });
+
+  it("does not match em-dash normalised to hyphen as HER2 negative", () => {
+    // "ratio 3.8 — HER2 positive" — after em-dash normalisation the "—" becomes "-"
+    // surrounded by spaces, which should NOT match the categorical HER2-/+ shorthand.
+    const text = "patient notes: ratio 3.8 - her2 positive result confirmed.";
+    const result = extractBiomarker(text, "HER2");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).not.toBe("negative");
+    expect(result!.value.toLowerCase()).toBe("positive");
+  });
+});
+
 describe("Bug #5: Negation fallback broader patterns", () => {
   it("detects 'X negative for mutation' negation in fallback", () => {
     const p = buildFallbackPattern("KRAS");

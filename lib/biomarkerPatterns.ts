@@ -400,8 +400,17 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
     valuePatterns: [
       {
         // "HER2 3+" or "HER2 score 2+" or "HER2 3 +" (space before +)
-        pattern: /her2[\s\S]{0,30}?([0-3]\s*\+)/i,
+        // Also "ERBB2 3+" — anchor broadened to match erbb2 alias text
+        pattern: /(?:her2|erbb2)[\s\S]{0,30}?([0-3]\s*\+)/i,
         context: "HER2 IHC score 0/1+/2+/3+",
+        valueType: "composite",
+        transform: (raw) => `HER2 ${raw.trim().replace(/\s+\+$/, "+")}`,
+      },
+      {
+        // "HER2 IHC 0" / "ERBB2 IHC 0" — IHC score 0 (no '+' suffix in clinical report)
+        // Placed before categorical so it wins over any nearby "negative" text.
+        pattern: /(?:her2|erbb2)[\s\S]{0,20}?(?:ihc|score)[\s:=]*([0-3](?:\s*\+)?)/i,
+        context: "HER2/ERBB2 IHC score without + suffix",
         valueType: "composite",
         transform: (raw) => `HER2 ${raw.trim().replace(/\s+\+$/, "+")}`,
       },
@@ -413,16 +422,42 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
         transform: (raw) => `FISH ratio ${raw.trim()}`,
       },
       {
-        // "HER2 positive", "HER2 amplified", "HER2+" / "HER2-" (directly attached, no space)
-        // (?<!\s)[+-] prevents matching an em-dash separator like "ratio 3.8 — HER2"
-        // where the dash is normalised to "-" surrounded by spaces.
-        pattern: /her2[\s\S]{0,30}?(positive|negative|equivocal|amplified|not\s+amplified|(?<!\s)[+-])/i,
-        context: "HER2 categorical status",
+        // "ERBB2 amplification (ratio 4.8)" — copy-number amplification with explicit ratio
+        // Captures just the ratio number; transforms to "Amplified (ratio X)"
+        pattern: /(?:her2|erbb2)[\s\S]{0,40}?amplification[\s\S]{0,30}?\(ratio\s*(\d+(?:\.\d+)?)\)/i,
+        context: "ERBB2/HER2 amplification with ratio",
+        valueType: "composite",
+        transform: (raw) => `Amplified (ratio ${raw.trim()})`,
+      },
+      {
+        // "ERBB2 exon 20 ins" / "ERBB2 exon 20 insertion" — exon-level insertion variants
+        pattern: /(?:her2|erbb2)[\s\S]{0,20}?exon\s*(\d+)\s*(ins(?:ertion)?)/i,
+        context: "ERBB2/HER2 exon insertion",
+        valueType: "composite",
+        // raw = capture group 1 = exon number (e.g. "20")
+        transform: (raw) => `Exon ${raw.trim()} insertion`,
+      },
+      {
+        // "ERBB2 S310F" / "HER2 V777L" — alphanumeric somatic mutation codes
+        // Pattern: letter + digits + letter  (standard amino-acid change notation)
+        pattern: /(?:her2|erbb2)[\s\S]{0,20}?\b([A-Z]\d+[A-Z*])\b/i,
+        context: "ERBB2/HER2 mutation code",
+        valueType: "composite",
+        transform: (raw) => raw.trim().toUpperCase(),
+      },
+      {
+        // "HER2 positive", "HER2 amplified", "ERBB2 amplified", "HER2+" / "HER2-" (directly attached)
+        // (?<!\s)[+-] prevents matching a space-surrounded em-dash separator like "ratio 3.8 — HER2"
+        // Also covers "non-amplified" alongside "not amplified"
+        pattern: /(?:her2|erbb2)[\s\S]{0,30}?(positive|negative|equivocal|ampli(?:fied|fication)|not\s+ampli(?:fied|fication)|non-amplified|(?<!\s)[+-])/i,
+        context: "HER2/ERBB2 categorical status",
         valueType: "categorical",
         transform: (raw) => {
           const r = raw.trim().toLowerCase();
           if (r === "+") return "Positive";
           if (r === "-") return "Negative";
+          if (r === "non-amplified" || r.startsWith("not amplif")) return "Not amplified";
+          if (r.startsWith("amplif")) return "Amplified";
           return raw.trim().charAt(0).toUpperCase() + raw.trim().slice(1).toLowerCase();
         },
       },
@@ -1066,9 +1101,15 @@ export function buildFallbackPattern(biomarkerName: string): BiomarkerPattern {
       },
       {
         // C. Fusion gene: CD74-ROS1 fusion, EML4-ALK rearrangement, BCR-ABL1 translocation
-        // The fusion/rearrangement keyword is MANDATORY — prevents unit strings like
-        // "ng/ml" or "copies/ml" from being misread as gene-fusion notation.
-        pattern: /([a-z][a-z0-9]{1,9}[-/][a-z][a-z0-9]{0,9}\s+(?:fusion|rearrangement|translocation|arrangement))/i,
+        // Anchored to biomarker name so that fusions from OTHER pipe-separated entries
+        // in the same context window do not get attributed to the wrong gene.
+        // e.g. searching "TP53" in "RET KIF5B-RET fusion | ... | TP53 frameshift"
+        // must NOT capture "KIF5B-RET fusion" from the RET entry.
+        // Window capped at 30 chars — fusion partner appears directly after the gene name.
+        pattern: new RegExp(
+          flexEscaped + NB + "{0,30}?([a-z][a-z0-9]{1,9}[-/][a-z][a-z0-9]{0,9}\\s+(?:fusion|rearrangement|translocation|arrangement))",
+          "i"
+        ),
         context: "fusion gene",
         valueType: "composite",
         transform: (raw) => {

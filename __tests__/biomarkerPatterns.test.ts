@@ -872,3 +872,125 @@ describe("Pattern J: molecular/genomic alteration status (biallelic, frameshift,
     expect(result!.value.toLowerCase()).toContain("loss of function");
   });
 });
+
+// ─── Bug 2 Regression: ERBB2 alias extraction (63 missed rows) ───────────────
+
+describe("Bug 2 regression: ERBB2 alias extraction", () => {
+  it("extracts ERBB2 amplification from ERBB2-only text", () => {
+    // 17 rows missed: text contains only 'ERBB2', no 'HER2' literal
+    const result = extractBiomarker(
+      "NGS result: ERBB2 amplification detected. High copy number gain.",
+      "HER2"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("amplif");
+  });
+
+  it("extracts ERBB2 S310F mutation code", () => {
+    // 11 rows missed: ERBB2 mutation codes (e.g. S310F, V777L)
+    const result = extractBiomarker(
+      "Somatic variant: ERBB2 S310F identified in tumor sample.",
+      "HER2"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value.toUpperCase()).toContain("S310F");
+  });
+
+  it("extracts ERBB2 exon 20 insertion", () => {
+    // 15 rows missed: ERBB2 exon insertions
+    const result = extractBiomarker(
+      "ERBB2 exon 20 insertion confirmed by NGS panel.",
+      "HER2"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("exon");
+    expect(result!.value).toContain("20");
+  });
+
+  it("extracts ERBB2 amplification (ratio 4.8)", () => {
+    // 20 rows missed: ERBB2 amplification with explicit ratio
+    const result = extractBiomarker(
+      "Copy number analysis: ERBB2 amplification (ratio 4.8) above threshold.",
+      "HER2"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/4\.8/);
+    expect(result!.value.toLowerCase()).toContain("amplif");
+  });
+});
+
+// ─── Bug 3 Regression: HER2 IHC 0 incorrectly attributed ────────────────────
+
+describe("Bug 3 regression: HER2 IHC 0 extraction", () => {
+  it("extracts HER2 IHC 0 from pipe-separated list without CDX2 interference", () => {
+    // 2 rows returned 'Negative' (from CDX2) instead of 'HER2 0'
+    // Pattern: "HER2 IHC 0 | CDX2 negative"
+    const result = extractBiomarker(
+      "Immunohistochemistry: HER2 IHC 0 | CDX2 negative | ER positive",
+      "HER2"
+    );
+    expect(result).not.toBeNull();
+    // Should extract IHC score 0, NOT "Negative" from CDX2
+    expect(result!.value).toMatch(/0/);
+    expect(result!.value.toLowerCase()).not.toBe("negative");
+  });
+
+  it("extracts HER2 IHC score 0 (bare zero, no + suffix)", () => {
+    const result = extractBiomarker(
+      "HER2 IHC score: 0. No staining observed.",
+      "HER2"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value).toMatch(/0/);
+  });
+});
+
+// ─── Fusion gene pattern cross-contamination regression ──────────────────────
+
+describe("Fallback pattern C — fusion gene anchoring (cross-contamination regression)", () => {
+  it("TP53 frameshift — does NOT capture KIF5B-RET fusion from adjacent pipe entry", () => {
+    // Regression: pattern C was unanchored — it matched KIF5B-RET fusion (from the RET entry)
+    // when searching for TP53 because both were in the same 200-char context window.
+    const text =
+      "Somatic mutations identified: RET KIF5B-RET fusion | ALK rearrangement | PIK3CA E542K | TP53 frameshift";
+    const result = extractBiomarker(text, "TP53");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("frameshift");
+    expect(result!.value).not.toContain("KIF5B");
+    expect(result!.value).not.toContain("fusion");
+  });
+
+  it("TP53 frameshift — extracts correctly from full surgical pathology report text", () => {
+    const text = `IHC / receptor panel results:
+  PAX8 positive | Napsin A positive | AR negative | ER 92% strongly positive (Allred 8/8)
+
+Somatic mutations identified: RET KIF5B-RET fusion | ALK rearrangement | PIK3CA E542K | TP53 frameshift`;
+    const result = extractBiomarker(text, "TP53");
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("frameshift");
+  });
+
+  it("RET — still captures KIF5B-RET fusion when RET is the query", () => {
+    // Anchored pattern C should still work when the query gene is part of the fusion
+    const result = extractBiomarker(
+      "Somatic mutations: RET KIF5B-RET fusion detected.",
+      "RET"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("fusion");
+  });
+});
+
+// ─── Non-amplified alias ──────────────────────────────────────────────────────
+
+describe("HER2 non-amplified alias", () => {
+  it("extracts 'non-amplified' as categorical result", () => {
+    // No ratio present so the FISH ratio pattern cannot win
+    const result = extractBiomarker(
+      "IHC panel: HER2 non-amplified by standard criteria.",
+      "HER2"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.value.toLowerCase()).toContain("not amplified");
+  });
+});

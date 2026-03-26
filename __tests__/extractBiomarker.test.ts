@@ -66,6 +66,42 @@ describe("normalizeForExtraction", () => {
     const result = normalizeForExtraction(text);
     expect(result).toBe("psa level 4.2");
   });
+
+  // Regression: Bug A — thousands-separator comma was left in place, causing
+  // numeric regexes to match only the digits before the comma (e.g. "8" from "8,420").
+  it("strips thousands-separator commas before decimal comma normalization", () => {
+    expect(normalizeForExtraction("AFP 8,420 ng/mL")).toContain("8420");
+  });
+
+  it("does not corrupt European decimal commas when stripping thousands separators", () => {
+    // 4,2 is a decimal comma (2-digit group) — must stay as 4.2
+    expect(normalizeForExtraction("PSA 4,2 ng/mL")).toContain("4.2");
+  });
+
+  it("strips single thousands-separator group (8,420 → 8420)", () => {
+    // One comma with 3 digits after — the common clinical lab case
+    expect(normalizeForExtraction("LDH 1,234 U/L")).toContain("1234");
+  });
+});
+
+// ─── AFP thousands-separator regression (Bug A) ───────────────────────────
+
+describe("AFP extraction — thousands-separator values (Bug A regression)", () => {
+  it("extracts 8420 from 'AFP 8,420 ng/mL' (pipe-separated lab line)", () => {
+    const text = "labs: AFP 8,420 ng/mL | AFP 6.2 ng/mL | LDH 842 U/L";
+    const result = extractBiomarker(text, "AFP");
+    expect(result).not.toBeNull();
+    // Value should contain the full number, not just "8"
+    expect(result!.value).toMatch(/8420|8,420/);
+  });
+
+  it("extracts correct value when AFP appears in pipe-separated lab list with large number", () => {
+    const text = "labs: AFP 8,420 ng/mL | AFP 6.2 ng/mL | SCC antigen 4.8 ng/mL | LDH 842 U/L";
+    const result = extractBiomarker(text, "AFP");
+    expect(result).not.toBeNull();
+    expect(result!.value).not.toBe("8"); // the old wrong result
+    expect(result!.value).toMatch(/8420|8,420/);
+  });
 });
 
 // ─── Alias Resolution Tests ───────────────────────────────────────────────
@@ -920,5 +956,34 @@ describe("hasAttributionRisk — attribution risk detection", () => {
     expect(
       hasAttributionRisk("CA-125 412 U/mL | AFP 6.2 ng/mL | LDH 180 U/L", "CA-125")
     ).toBe(true);
+  });
+});
+
+// ─── shouldEnrich — PENDING filter regression (Bug B) ────────────────────
+
+import { shouldEnrich } from "../lib/aiEnrichment";
+
+describe("shouldEnrich", () => {
+  it("returns true for null rule result on fallback biomarker", () => {
+    expect(shouldEnrich(null, true)).toBe(true);
+  });
+
+  it("returns false for known biomarker (isFallback=false), even with null result", () => {
+    expect(shouldEnrich(null, false)).toBe(false);
+  });
+
+  it("returns true for bare-numeric value (likely misparse)", () => {
+    const result = { value: "8", valueType: "numeric" as const, evidence: "", matchedAlias: "afp", confidence: "high" as const };
+    expect(shouldEnrich(result, true)).toBe(true);
+  });
+
+  it("returns false for high-confidence result with real value", () => {
+    const result = { value: "8420 ng/mL", valueType: "numeric" as const, evidence: "", matchedAlias: "afp", confidence: "high" as const };
+    expect(shouldEnrich(result, false)).toBe(false);
+  });
+
+  it("returns true for medium-confidence fallback result", () => {
+    const result = { value: "positive", valueType: "categorical" as const, evidence: "", matchedAlias: "afp", confidence: "medium" as const };
+    expect(shouldEnrich(result, true)).toBe(true);
   });
 });

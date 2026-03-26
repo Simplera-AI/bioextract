@@ -24,6 +24,7 @@ import {
 } from "./biomarkerPatterns";
 import { enrichWithAI } from "./aiEnrichment";
 import { hasAttributionRisk, validateAttribution } from "./aiValidation";
+import { inferBiomarkerType } from "./biomarkerTypeInference";
 import type {
   BiomarkerExtractionResult,
   BiomarkerValueType,
@@ -637,11 +638,12 @@ export async function extractBiomarkerAsync(
   const isFallback = getBiomarkerPattern(biomarkerQuery) === null;
   const ruleResult = extractBiomarker(text, biomarkerQuery);
 
-  // Step 1: AI enrichment for unknown biomarkers with null / bare-numeric results
+  // Step 1: AI enrichment for unknown biomarkers with null / low-confidence results
   let finalResult = ruleResult;
   let markedAiEnriched = false;
   if (isFallback) {
-    const enrichment = await enrichWithAI(biomarkerQuery, text, ruleResult, isFallback);
+    const category = inferBiomarkerType(biomarkerQuery);
+    const enrichment = await enrichWithAI(biomarkerQuery, text, ruleResult, isFallback, category);
     finalResult = enrichment.result;
     markedAiEnriched = enrichment.aiEnriched;
   }
@@ -737,7 +739,7 @@ export async function runBiomarkerExtractionAsync(
 
     const needsEnrich =
       aiEnabled && isFallback && text.trim() !== "" &&
-      (ruleResult === null || isBareNumeric(ruleResult.value));
+      (ruleResult === null || isBareNumeric(ruleResult.value) || ruleResult.confidence !== "high");
 
     const needsValidate =
       aiEnabled && ruleResult !== null &&
@@ -759,6 +761,9 @@ export async function runBiomarkerExtractionAsync(
   const enrichIdxs   = meta.map((m, i) => (m.needsEnrich   ? i : -1)).filter(i => i >= 0);
   const validateIdxs = meta.map((m, i) => (m.needsValidate ? i : -1)).filter(i => i >= 0);
 
+  // Infer category once per extraction run (all rows share the same biomarker query)
+  const biomarkerCategory = inferBiomarkerType(trimmedQuery);
+
   const total = rows.length;
   const aiTotal = enrichIdxs.length + validateIdxs.length;
   let aiCompleted = 0;
@@ -777,7 +782,7 @@ export async function runBiomarkerExtractionAsync(
   for (let b = 0; b < enrichIdxs.length; b += AI_BATCH_SIZE) {
     await Promise.all(
       enrichIdxs.slice(b, b + AI_BATCH_SIZE).map(async idx => {
-        const enrichment = await enrichWithAI(trimmedQuery, meta[idx].text, meta[idx].ruleResult, true);
+        const enrichment = await enrichWithAI(trimmedQuery, meta[idx].text, meta[idx].ruleResult, true, biomarkerCategory);
         enrichMap.set(idx, enrichment);
         aiCompleted++;
         reportAI();

@@ -37,6 +37,32 @@ export interface BiomarkerExtractionResult {
   aiEnriched?: boolean;
 }
 
+// ─── TNM Multi-Field Result ───────────────────────────────────────────────
+
+/**
+ * Structured result for TNM staging queries.
+ * Each component is extracted independently and may be null if not found.
+ * Used when the biomarker query resolves to a TNM/staging biomarker.
+ */
+export interface TNMResult {
+  /** T-category: e.g. "pT2a", "cT3", "ypT1", "Tx" */
+  T: string | null;
+  /** N-category: e.g. "N0", "pN1b", "N3" */
+  N: string | null;
+  /** M-category: e.g. "M0", "M1a", "cM1" */
+  M: string | null;
+  /** Stage Group: e.g. "Stage IIB", "Stage IIIA" */
+  stageGroup: string | null;
+  /** Source text snippet for each component (parallel arrays, may share evidence) */
+  evidenceT: string;
+  evidenceN: string;
+  evidenceM: string;
+  evidenceStageGroup: string;
+  confidence: "high" | "medium" | "low";
+  /** True when any field was filled by AI enrichment */
+  aiEnriched?: boolean;
+}
+
 // ─── Row-level output ─────────────────────────────────────────────────────
 
 export interface RowExtractionResult {

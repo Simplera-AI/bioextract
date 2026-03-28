@@ -25,12 +25,20 @@ import {
 import { enrichWithAI } from "./aiEnrichment";
 import { hasAttributionRisk, validateAttribution } from "./aiValidation";
 import { inferBiomarkerType } from "./biomarkerTypeInference";
+import {
+  isTNMQuery,
+  extractTNMFields,
+  enrichTNMWithAI,
+  tnmResultToRow,
+  TNM_ALL_COLS,
+} from "./extractTNM";
 import type {
   BiomarkerExtractionResult,
   BiomarkerValueType,
   ExtractionOutput,
   ExtractionProgress,
   ExtractionStats,
+  TNMResult,
 } from "./types";
 
 // ─── Phase 0: Alias Resolution ──────────────────────────────────────────
@@ -555,8 +563,10 @@ export function extractBiomarker(
 
 /**
  * Run biomarker extraction over an entire dataset.
- * Appends 2 columns to every row: "[BiomarkerName] Value" + "[BiomarkerName] Evidence"
- * Rows with no mention get empty strings in both new columns.
+ *
+ * Standard biomarkers: appends 2 columns ("[Name] Value" + "[Name] Evidence").
+ * TNM queries:         appends 8 columns (T/N/M/Stage Group, each with Value + Evidence).
+ * Rows with no mention get empty strings in all new columns.
  */
 export function runBiomarkerExtraction(
   rows: Record<string, string>[],
@@ -567,9 +577,35 @@ export function runBiomarkerExtraction(
 ): ExtractionOutput {
   const startTime = Date.now();
   const trimmedQuery = biomarkerQuery.trim();
+
+  // ── TNM multi-field path ────────────────────────────────────────────────
+  if (isTNMQuery(trimmedQuery)) {
+    const headersOut = [...originalHeaders, ...TNM_ALL_COLS];
+    let foundCount = 0;
+    let notFoundCount = 0;
+
+    const rowsOut: Record<string, string>[] = rows.map((row, i) => {
+      const cellText = row[selectedColumn] ?? "";
+      const result = extractTNMFields(cellText);
+
+      onProgress?.({ processed: i + 1, total: rows.length, percent: Math.round(((i + 1) / rows.length) * 100), phase: "scanning", aiProcessed: 0, aiTotal: 0 });
+
+      const hasAny = result && (result.T || result.N || result.M || result.stageGroup);
+      if (hasAny) foundCount++; else notFoundCount++;
+
+      return { ...row, ...tnmResultToRow(result) };
+    });
+
+    return {
+      headersOut,
+      rowsOut,
+      stats: { totalRows: rows.length, foundCount, notFoundCount, pendingCount: 0, biomarkerName: trimmedQuery, column: selectedColumn, durationMs: Date.now() - startTime },
+    };
+  }
+
+  // ── Standard single-value path ──────────────────────────────────────────
   const valueCol = trimmedQuery + " Value";
   const evidenceCol = trimmedQuery + " Evidence";
-
   const headersOut = [...originalHeaders, valueCol, evidenceCol];
 
   let foundCount = 0;
@@ -705,12 +741,65 @@ export async function runBiomarkerExtractionAsync(
 ): Promise<ExtractionOutput> {
   const startTime = Date.now();
   const trimmedQuery = biomarkerQuery.trim();
+  const aiEnabled = process.env.NEXT_PUBLIC_AI_ENRICHMENT === "true";
+
+  // ── TNM multi-field async path ──────────────────────────────────────────
+  if (isTNMQuery(trimmedQuery)) {
+    const headersOut = [...originalHeaders, ...TNM_ALL_COLS];
+    let foundCount = 0;
+    let notFoundCount = 0;
+    let aiEnrichedCount = 0;
+
+    // Phase 1: rule engine (sync)
+    const tnmMeta: Array<{ row: Record<string, string>; text: string; ruleResult: TNMResult | null; needsAI: boolean }> =
+      rows.map((row, i) => {
+        const text = row[selectedColumn] ?? "";
+        const ruleResult = extractTNMFields(text);
+        const needsAI = aiEnabled && text.trim() !== "" &&
+          (!ruleResult || !ruleResult.T || !ruleResult.N || !ruleResult.M || !ruleResult.stageGroup);
+        const phase1Scale = aiEnabled ? 10 : 100;
+        onProgress?.({ processed: i + 1, total: rows.length, percent: Math.round(((i + 1) / rows.length) * phase1Scale), phase: "scanning", aiProcessed: 0, aiTotal: 0 });
+        return { row, text, ruleResult, needsAI };
+      });
+
+    // Phase 2: AI fill-in for rows with missing fields
+    const aiIdxs = tnmMeta.map((m, i) => m.needsAI ? i : -1).filter(i => i >= 0);
+    const aiResults = new Map<number, TNMResult | null>();
+    let aiDone = 0;
+    const total = rows.length;
+
+    for (let b = 0; b < aiIdxs.length; b += AI_BATCH_SIZE) {
+      await Promise.all(
+        aiIdxs.slice(b, b + AI_BATCH_SIZE).map(async idx => {
+          const partial = tnmMeta[idx].ruleResult ?? { T: null, N: null, M: null, stageGroup: null, evidenceT: "", evidenceN: "", evidenceM: "", evidenceStageGroup: "", confidence: "low" as const };
+          const enriched = await enrichTNMWithAI(tnmMeta[idx].text, partial);
+          aiResults.set(idx, enriched);
+          aiDone++;
+          onProgress?.({ processed: total, total, percent: Math.round(10 + (aiDone / aiIdxs.length) * 90), phase: "enriching", aiProcessed: aiDone, aiTotal: aiIdxs.length });
+        })
+      );
+    }
+
+    const rowsOut: Record<string, string>[] = tnmMeta.map(({ row, ruleResult }, idx) => {
+      const final = aiResults.get(idx) ?? ruleResult;
+      const hasAny = final && (final.T || final.N || final.M || final.stageGroup);
+      if (hasAny) { foundCount++; if (final?.aiEnriched) aiEnrichedCount++; }
+      else notFoundCount++;
+      return { ...row, ...tnmResultToRow(final) };
+    });
+
+    return {
+      headersOut, rowsOut,
+      stats: { totalRows: rows.length, foundCount, notFoundCount, pendingCount: 0, biomarkerName: trimmedQuery, column: selectedColumn, durationMs: Date.now() - startTime, aiEnrichedCount },
+    };
+  }
+
+  // ── Standard single-value async path ───────────────────────────────────
   const valueCol = trimmedQuery + " Value";
   const evidenceCol = trimmedQuery + " Evidence";
   const headersOut = [...originalHeaders, valueCol, evidenceCol];
 
   const isFallback = getBiomarkerPattern(trimmedQuery) === null;
-  const aiEnabled = process.env.NEXT_PUBLIC_AI_ENRICHMENT === "true";
 
   // ── Phase 1: Rule engine — synchronous, all rows, no network ─────────────
   // Dedup cache: same cell text → reuse rule result.

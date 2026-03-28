@@ -178,13 +178,25 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
   },
 
   // ── TNM Staging ──────────────────────────────────────────────────────────
+  // NOTE: When the user queries "TNM" (or any alias below), extraction is routed
+  // to extractTNMFields() in lib/extractTNM.ts which returns a TNMResult with
+  // four separate fields (T, N, M, Stage Group). The valuePatterns below are
+  // retained as a legacy reference fallback only — they are NOT used in the
+  // primary TNM extraction path. See extractBiomarker.ts for routing logic.
   {
     name: "TNM",
     aliases: [
-      "tnm staging",
+      // Listed longest-first so alias resolution picks the most specific match
       "tnm classification",
+      "pathological staging",
       "pathologic staging",
+      "overall staging",
+      "ajcc staging",
+      "ajcc stage",
       "clinical staging",
+      "final staging",
+      "stage group",
+      "tnm staging",
       "tnm stage",
       "tnm",
     ],
@@ -193,22 +205,24 @@ export const BIOMARKER_PATTERNS: BiomarkerPattern[] = [
     pendingPhrases: ["not staged", "staging pending", "to be staged", "pending"],
     valuePatterns: [
       {
-        // "ypT1N0M0", "pT2N1M1", "cT3N2M0" — full TNM with prefix
-        pattern: /([ycra]?p?[tT][0-4x][a-d]?\s*[nN][0-3x][a-c]?\s*[mM][01x][a-b]?(?:\s*[rR][01])?(?:\s*[vV][01])?(?:\s*[lL][01])?(?:\s*[pP][nN][01])?)/,
+        // Full TNM with compound prefix (yp=post-treatment pathologic, rp=recurrence pathologic)
+        // Supports M1a–M1d sub-categories and optional pathologic suffixes (R, V, L, Pn)
+        pattern: /([ycra]?(?:yp|rp)?p?[tT][0-4x][a-d]?(?:is|mi)?\s*[nN][0-3x][a-c]?(?:mi)?\s*[mM][01x][a-d]?(?:\s*[rR][01])?(?:\s*[vV][01])?(?:\s*[lL][01])?(?:\s*[pP][nN][01])?)/,
         context: "full TNM code",
         valueType: "composite",
         transform: (raw) => raw.trim().replace(/\s+/g, ""),
       },
       {
         // "T2 N0 M0" with spaces
-        pattern: /\b([tT][0-4x][a-d]?\s+[nN][0-3x][a-c]?\s+[mM][01x][a-b]?)\b/,
+        pattern: /\b([tT][0-4x][a-d]?\s+[nN][0-3x][a-c]?\s+[mM][01x][a-d]?)\b/,
         context: "TNM with spaces",
         valueType: "composite",
         transform: (raw) => raw.trim().replace(/\s+/g, ""),
       },
       {
         // T-category alone when full TNM not available
-        pattern: /\b([ycra]?p?[tT][0-4x][a-d]?)\b/,
+        // Supports compound prefix yp/rp/a for post-treatment and recurrence staging
+        pattern: /\b([ycra]?(?:yp|rp)?p?[tT][0-4x][a-d]?(?:is|mi)?)\b/,
         context: "T-category alone",
         valueType: "composite",
         transform: (raw) => raw.trim(),

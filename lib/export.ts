@@ -1,4 +1,5 @@
 import Papa from "papaparse";
+import { TNM_VALUE_COLS, TNM_EVIDENCE_COLS } from "./extractTNM";
 
 function triggerDownload(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
@@ -94,10 +95,24 @@ export async function exportBiomarkerXlsx(
   const XLSX = (await import("xlsx-js-style")) as any;
   const filename = buildFilename(originalFileName, suffix, "xlsx");
 
-  const valueCol = `${biomarkerName} Value`;
-  const evidenceCol = `${biomarkerName} Evidence`;
-  const valueColIdx = headersOut.indexOf(valueCol);
-  const evidenceColIdx = headersOut.indexOf(evidenceCol);
+  // Detect TNM multi-field mode: biomarkerName is "TNM" (or a TNM alias) and
+  // the output includes the standard TNM column set instead of a single Value/Evidence pair.
+  const isTNMExport = TNM_VALUE_COLS.some((col) => headersOut.includes(col));
+
+  // For standard exports: single value/evidence column pair.
+  // For TNM exports:      four value columns + four evidence columns.
+  const valueCol = isTNMExport ? "" : `${biomarkerName} Value`;
+  const evidenceCol = isTNMExport ? "" : `${biomarkerName} Evidence`;
+  const valueColIdx = isTNMExport ? -1 : headersOut.indexOf(valueCol);
+  const evidenceColIdx = isTNMExport ? -1 : headersOut.indexOf(evidenceCol);
+
+  // Index sets for TNM column styling (resolved once, reused per data row)
+  const tnmValueIdxs = isTNMExport
+    ? TNM_VALUE_COLS.map((col) => headersOut.indexOf(col)).filter((i) => i >= 0)
+    : [];
+  const tnmEvidenceIdxs = isTNMExport
+    ? TNM_EVIDENCE_COLS.map((col) => headersOut.indexOf(col)).filter((i) => i >= 0)
+    : [];
 
   // Build array of arrays
   const aoa: string[][] = [headersOut];
@@ -126,7 +141,11 @@ export async function exportBiomarkerXlsx(
   // Style data rows
   for (let r = 1; r <= rowsOut.length; r++) {
     const row = rowsOut[r - 1];
-    const hasValue = valueColIdx >= 0 && !!(row[valueCol]?.trim());
+
+    // A row "has value" if any extracted field is non-empty
+    const hasValue = isTNMExport
+      ? TNM_VALUE_COLS.some((col) => !!(row[col]?.trim()))
+      : (valueColIdx >= 0 && !!(row[valueCol]?.trim()));
 
     if (hasValue) {
       // Style all cells in this row with the base teal-50 background
@@ -135,12 +154,22 @@ export async function exportBiomarkerXlsx(
         if (!ws[ref]) {
           ws[ref] = { v: "", t: "s" };
         }
-        if (c === valueColIdx) {
-          ws[ref].s = VALUE_FOUND_STYLE;
-        } else if (c === evidenceColIdx) {
-          ws[ref].s = EVIDENCE_FOUND_STYLE;
+        if (isTNMExport) {
+          if (tnmValueIdxs.includes(c)) {
+            ws[ref].s = VALUE_FOUND_STYLE;
+          } else if (tnmEvidenceIdxs.includes(c)) {
+            ws[ref].s = EVIDENCE_FOUND_STYLE;
+          } else {
+            ws[ref].s = ROW_FOUND_STYLE;
+          }
         } else {
-          ws[ref].s = ROW_FOUND_STYLE;
+          if (c === valueColIdx) {
+            ws[ref].s = VALUE_FOUND_STYLE;
+          } else if (c === evidenceColIdx) {
+            ws[ref].s = EVIDENCE_FOUND_STYLE;
+          } else {
+            ws[ref].s = ROW_FOUND_STYLE;
+          }
         }
       }
     }

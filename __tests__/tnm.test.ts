@@ -244,6 +244,38 @@ describe("extractTNMFields — labeled field format", () => {
     expect(r!.T).toMatch(/PT2B/i);
     expect(r!.N).toMatch(/N0/i);
   });
+
+  it("AJCC report format: 'Primary Tumor (T):  T1a' parenthesised label", () => {
+    const text = [
+      "PATHOLOGIC STAGING (AJCC Cancer Staging Manual, 8th Edition)",
+      "  Primary Tumor (T):           T1a",
+      "  Regional Lymph Nodes (N):    N1",
+      "  Distant Metastasis (M):      M1a",
+      "  Pathologic Stage Group:      Stage IV",
+    ].join("\n");
+    const r = extractTNMFields(text);
+    expect(r).not.toBeNull();
+    expect(r!.T).toMatch(/T1A/i);
+    expect(r!.N).toMatch(/N1/i);
+    expect(r!.M).toMatch(/M1A/i);
+    expect(r!.stageGroup).toMatch(/IV/i);
+  });
+
+  it("AJCC report format with Tx/Nx (not classifiable)", () => {
+    const text = [
+      "PATHOLOGIC STAGING (AJCC Cancer Staging Manual, 8th Edition)",
+      "  Primary Tumor (T):           Tx",
+      "  Regional Lymph Nodes (N):    Nx",
+      "  Distant Metastasis (M):      M0",
+      "  Pathologic Stage Group:      locally advanced Stage 3A",
+    ].join("\n");
+    const r = extractTNMFields(text);
+    expect(r).not.toBeNull();
+    expect(r!.T).toMatch(/TX/i);
+    expect(r!.N).toMatch(/NX/i);
+    expect(r!.M).toMatch(/M0/i);
+    expect(r!.stageGroup).toMatch(/3A/i);
+  });
 });
 
 // ─── No staging content → null ───────────────────────────────────────────────

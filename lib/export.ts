@@ -155,9 +155,10 @@ export async function exportBiomarkerXlsx(
           ws[ref] = { v: "", t: "s" };
         }
         if (isTNMExport) {
-          if (tnmValueIdxs.includes(c)) {
+          const cellValue = String(aoa[r][c] ?? "").trim();
+          if (tnmValueIdxs.includes(c) && cellValue) {
             ws[ref].s = VALUE_FOUND_STYLE;
-          } else if (tnmEvidenceIdxs.includes(c)) {
+          } else if (tnmEvidenceIdxs.includes(c) && cellValue) {
             ws[ref].s = EVIDENCE_FOUND_STYLE;
           } else {
             ws[ref].s = ROW_FOUND_STYLE;

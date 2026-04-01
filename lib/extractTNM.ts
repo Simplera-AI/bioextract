@@ -67,22 +67,29 @@ const COMPACT_TNM_RE =
   /\b([ycra]?(?:yp|rp)?p?[cC]?[tT][0-4x][a-d]?(?:is|mi)?)\s*([ycra]?p?[nN][0-3x][a-c]?(?:mi)?)\s*([ycra]?p?[mM][01x][a-d]?)\b/i;
 
 /**
- * T-category labeled field: "T: pT3a", "T – pT2b", "T category: T2"
+ * T-category labeled field.
+ * Handles:
+ *   "T: pT3a"           — simple colon
+ *   "T – pT2b"          — en-dash
+ *   "(T):    T1a"       — parenthesised label (AJCC report format)
+ *   "Primary Tumor (T): T2"  — full AJCC label with parenthesised T
  */
 const LABELED_T_RE =
-  /\bT\s*[-:–]\s*([ycra]?(?:yp|rp)?p?[cC]?[tT][0-4x][a-d]?(?:is|mi)?)\b/i;
+  /(?:\(T\)\s*:|(?<![a-zA-Z])T\s*[-:–])\s*([ycra]?(?:yp|rp)?p?[cC]?[tT][0-4x][a-d]?(?:is|mi)?)\b/i;
 
 /**
- * N-category labeled field: "N: N1b", "N – pN2"
+ * N-category labeled field.
+ * Handles: "N: N1b", "N – pN2", "(N):    N1", "Regional Lymph Nodes (N): N0"
  */
 const LABELED_N_RE =
-  /\bN\s*[-:–]\s*([ycra]?p?[nN][0-3x][a-c]?(?:mi)?)\b/i;
+  /(?:\(N\)\s*:|(?<![a-zA-Z])N\s*[-:–])\s*([ycra]?p?[nN][0-3x][a-c]?(?:mi)?)\b/i;
 
 /**
- * M-category labeled field: "M: M0", "M – cM1a"
+ * M-category labeled field.
+ * Handles: "M: M0", "M – cM1a", "(M):    M0", "Distant Metastasis (M): M1a"
  */
 const LABELED_M_RE =
-  /\bM\s*[-:–]\s*([ycra]?p?[mM][01x][a-d]?)\b/i;
+  /(?:\(M\)\s*:|(?<![a-zA-Z])M\s*[-:–])\s*([ycra]?p?[mM][01x][a-d]?)\b/i;
 
 /**
  * Stage Group: "AJCC Stage IIB", "Stage IIIA", "Overall stage: II", "stage group 2A"

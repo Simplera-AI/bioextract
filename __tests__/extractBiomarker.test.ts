@@ -968,8 +968,20 @@ describe("shouldEnrich", () => {
     expect(shouldEnrich(null, true)).toBe(true);
   });
 
-  it("returns false for known biomarker (isFallback=false), even with null result", () => {
-    expect(shouldEnrich(null, false)).toBe(false);
+  it("returns true for known biomarker (isFallback=false) when regex found nothing — AI safety net", () => {
+    // Known biomarkers like PSA, HER2 now get AI enrichment when regex returns null
+    // so that unseen clinical report formats don't silently return empty
+    expect(shouldEnrich(null, false)).toBe(true);
+  });
+
+  it("returns false for known biomarker with high-confidence extraction — no double-processing", () => {
+    const result = { value: "4.2 ng/mL", valueType: "numeric" as const, evidence: "", matchedAlias: "psa", confidence: "high" as const };
+    expect(shouldEnrich(result, false)).toBe(false);
+  });
+
+  it("returns false for known biomarker with medium-confidence extraction — regex result trusted", () => {
+    const result = { value: "positive", valueType: "categorical" as const, evidence: "", matchedAlias: "her2", confidence: "medium" as const };
+    expect(shouldEnrich(result, false)).toBe(false);
   });
 
   it("returns true for bare-numeric value (likely misparse)", () => {
@@ -977,7 +989,7 @@ describe("shouldEnrich", () => {
     expect(shouldEnrich(result, true)).toBe(true);
   });
 
-  it("returns false for high-confidence result with real value", () => {
+  it("returns false for fallback high-confidence result with real value", () => {
     const result = { value: "8420 ng/mL", valueType: "numeric" as const, evidence: "", matchedAlias: "afp", confidence: "high" as const };
     expect(shouldEnrich(result, false)).toBe(false);
   });

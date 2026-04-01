@@ -169,6 +169,32 @@ PSA and fallback patterns recognise narrative verb phrases: `found to be`, `show
 
 - Example: `"PSA was found to be 4.2 ng/mL"` → extracts 4.2
 
+### AI Enrichment Safety Net (`lib/aiEnrichment.ts`)
+
+`shouldEnrich()` decides whether Phase 2 AI enrichment fires for a given row:
+
+| Biomarker type | Condition | AI fires? |
+|----------------|-----------|-----------|
+| **Known** (PSA, HER2, etc.) | Regex found nothing (`ruleResult === null`) | Yes — handles unseen report formats |
+| **Known** | Regex found a value (any confidence) | No — trust the named pattern |
+| **Unknown** (fallback) | Regex found nothing | Yes |
+| **Unknown** | Bare-numeric value (possible misparse) | Yes |
+| **Unknown** | Medium/low confidence result | Yes |
+| **Unknown** | High-confidence non-numeric value | No |
+
+**Key design decision**: Known biomarkers now get AI enrichment when regex finds nothing, so unseen clinical report formats (e.g. `"PSA concentration measured at 4.2"`, EMR table cells, free-text narrative) don't silently return empty. AI never overrides a successful regex extraction for known markers.
+
+### TNM Labeled Field Format Coverage (`lib/extractTNM.ts`)
+
+`LABELED_T_RE`, `LABELED_N_RE`, `LABELED_M_RE` handle all real-world label styles:
+
+- `T: pT3a` — simple colon
+- `T – pT2b` — en-dash
+- `(T): T1a` — AJCC parenthesised form
+- `T category: T2a` — qualifier word before colon
+- `T stage: T3a` — qualifier word before colon
+- `T classification: pT2` — qualifier word before colon
+
 ---
 
 ## Output Format

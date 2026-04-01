@@ -278,6 +278,33 @@ describe("extractTNMFields — labeled field format", () => {
   });
 });
 
+// ─── Extended labeled field formats (resilience) ─────────────────────────────
+
+describe("extractTNMFields — extended label formats", () => {
+  it("'T category: T2a' format", () => {
+    const r = extractTNMFields("Pathologic staging:\n  T category: T2a\n  N category: N1\n  M category: M0");
+    expect(r).not.toBeNull();
+    expect(r!.T).toMatch(/T2A/i);
+    expect(r!.N).toMatch(/N1/i);
+    expect(r!.M).toMatch(/M0/i);
+  });
+
+  it("'T stage: T3a' format", () => {
+    const r = extractTNMFields("TNM staging report:\n  T stage: T3a\n  N stage: N2\n  M stage: M0");
+    expect(r).not.toBeNull();
+    expect(r!.T).toMatch(/T3A/i);
+    expect(r!.N).toMatch(/N2/i);
+    expect(r!.M).toMatch(/M0/i);
+  });
+
+  it("'T classification: pT2b' format", () => {
+    const r = extractTNMFields("AJCC 8th edition staging:\n  T classification: pT2b\n  N classification: pN1b\n  M classification: M0");
+    expect(r).not.toBeNull();
+    expect(r!.T).toMatch(/PT2B/i);
+    expect(r!.N).toMatch(/PN1B/i);
+  });
+});
+
 // ─── No staging content → null ───────────────────────────────────────────────
 
 describe("extractTNMFields — null guard", () => {

@@ -17,20 +17,28 @@ import { NextRequest, NextResponse } from "next/server";
 
 const TNM_SYSTEM_PROMPT =
   "You are a clinical oncology staging assistant. Extract TNM staging components from pathology and clinical notes. " +
+  "You must handle ALL clinical report formats — structured tables, narrative text, compact codes, and mixed styles. " +
   "Return ONLY valid JSON — no markdown, no explanation, no surrounding text.";
 
 function buildTNMPrompt(context: string): string {
   return (
-    `Extract the TNM staging components from this clinical text.\n\n` +
-    `Return ONLY this JSON object with four fields. Use null for any component not mentioned:\n` +
+    `Extract the TNM staging components from this clinical text. Handle ANY format you encounter.\n\n` +
+    `Return ONLY this JSON object. Use null for any component not found:\n` +
     `{"T": "pT2a", "N": "N0", "M": "M0", "stage_group": "Stage IIB", "confidence": "high|medium|low"}\n\n` +
     `Rules:\n` +
-    `- T: the T-category exactly as written (e.g. "pT2a", "cT3", "ypT1", "Tx"). null if absent.\n` +
-    `- N: the N-category exactly as written (e.g. "N0", "pN1b", "N3"). null if absent.\n` +
-    `- M: the M-category exactly as written (e.g. "M0", "M1a", "cM1"). null if absent.\n` +
-    `- stage_group: the AJCC/pathologic stage group (e.g. "Stage IIB", "Stage IIIA"). null if absent.\n` +
+    `- T: primary tumour category exactly as written. null if absent.\n` +
+    `- N: regional nodes category exactly as written. null if absent.\n` +
+    `- M: distant metastasis category exactly as written. null if absent.\n` +
+    `- stage_group: AJCC/pathologic overall stage (e.g. "Stage IIB", "Stage IV"). null if absent.\n` +
     `- Do NOT infer or calculate stage_group from T+N+M — only extract what is explicitly stated.\n` +
-    `- Extract values EXACTLY as written — preserve prefixes like p, c, yp, rp.\n\n` +
+    `- Extract values EXACTLY as written — preserve prefixes (p, c, yp, rp) and suffixes (a, b, is, mi).\n\n` +
+    `All these formats express the same data — extract correctly from whichever appears:\n` +
+    `  Compact:      "pT2N0M0"  |  "T3N1M0"  |  "ypT1bN0M0"\n` +
+    `  AJCC table:   "Primary Tumor (T): T2a" / "Regional Lymph Nodes (N): N1"\n` +
+    `  Colon format: "T: pT3a, N: pN1b, M: M0"\n` +
+    `  Dash format:  "T – pT2b / N – N0 / M – M0"\n` +
+    `  Narrative:    "pathologic staging revealed T2 N0 M0 disease"\n` +
+    `  Category:     "T category: T2a" / "N stage: N1" / "M classification: M0"\n\n` +
     `Text:\n${context}`
   );
 }

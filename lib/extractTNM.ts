@@ -68,28 +68,35 @@ const COMPACT_TNM_RE =
 
 /**
  * T-category labeled field.
- * Handles:
- *   "T: pT3a"           — simple colon
- *   "T – pT2b"          — en-dash
- *   "(T):    T1a"       — parenthesised label (AJCC report format)
- *   "Primary Tumor (T): T2"  — full AJCC label with parenthesised T
+ * Handles a wide range of real-world clinical report formats:
+ *   "T: pT3a"               — simple colon
+ *   "T – pT2b"              — en-dash
+ *   "(T):    T1a"           — parenthesised label (AJCC report format)
+ *   "Primary Tumor (T): T2" — full AJCC label
+ *   "T category: T2a"       — qualifier word before colon
+ *   "T stage: T3a"          — qualifier word before colon
+ *   "T classification: T1"  — qualifier word before colon
+ *
+ * Pattern: optional `(T)` parenthesised form OR bare `T` (not preceded by a letter)
+ * optionally followed by ONE qualifier word (category, stage, value, etc.) then a
+ * colon/dash separator.
  */
 const LABELED_T_RE =
-  /(?:\(T\)\s*:|(?<![a-zA-Z])T\s*[-:–])\s*([ycra]?(?:yp|rp)?p?[cC]?[tT][0-4x][a-d]?(?:is|mi)?)\b/i;
+  /(?:\(T\)\s*:|(?<![a-zA-Z])T(?:\s+\w+)?\s*[-:–])\s*([ycra]?(?:yp|rp)?p?[cC]?[tT][0-4x][a-d]?(?:is|mi)?)\b/i;
 
 /**
  * N-category labeled field.
- * Handles: "N: N1b", "N – pN2", "(N):    N1", "Regional Lymph Nodes (N): N0"
+ * Handles: "N: N1b", "N – pN2", "(N): N1", "N category: N2a", "N stage: N0"
  */
 const LABELED_N_RE =
-  /(?:\(N\)\s*:|(?<![a-zA-Z])N\s*[-:–])\s*([ycra]?p?[nN][0-3x][a-c]?(?:mi)?)\b/i;
+  /(?:\(N\)\s*:|(?<![a-zA-Z])N(?:\s+\w+)?\s*[-:–])\s*([ycra]?p?[nN][0-3x][a-c]?(?:mi)?)\b/i;
 
 /**
  * M-category labeled field.
- * Handles: "M: M0", "M – cM1a", "(M):    M0", "Distant Metastasis (M): M1a"
+ * Handles: "M: M0", "M – cM1a", "(M): M0", "M category: M1a", "M stage: M0"
  */
 const LABELED_M_RE =
-  /(?:\(M\)\s*:|(?<![a-zA-Z])M\s*[-:–])\s*([ycra]?p?[mM][01x][a-d]?)\b/i;
+  /(?:\(M\)\s*:|(?<![a-zA-Z])M(?:\s+\w+)?\s*[-:–])\s*([ycra]?p?[mM][01x][a-d]?)\b/i;
 
 /**
  * Stage Group: "AJCC Stage IIB", "Stage IIIA", "Overall stage: II", "stage group 2A"

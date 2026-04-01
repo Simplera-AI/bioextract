@@ -52,6 +52,9 @@ function buildPrompt(
     `${instructions}\n\n` +
     `Rules:\n` +
     `- Extract the EXACT value as written in the text — do not interpret or rephrase\n` +
+    `- The value may appear in ANY format: "PSA: 4.2", "PSA was 4.2 ng/mL", "PSA concentration measured at 4.2",\n` +
+    `  "PSA = 4.2", "PSA level: 4.2 ng/mL", "PSA (4.2)", table cells, structured reports, narrative notes.\n` +
+    `- Look for the value ASSOCIATED with the biomarker name — it may follow ":", "=", "–", "was", "of", "at", etc.\n` +
     `- If the biomarker is mentioned but has no value, return "not found"\n` +
     `- If the value is pending/awaited, return "PENDING"\n` +
     `- Return ONLY this JSON, nothing else: {"value": "...", "confidence": "high|medium|low"}\n\n` +

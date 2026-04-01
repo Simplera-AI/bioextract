@@ -22,16 +22,25 @@ interface AIEnrichmentResult {
 
 /**
  * Decide whether AI enrichment should fire for this result.
- * Criteria (all require isFallback=true):
- *   1. Rule result is null  — biomarker mentioned but no value found
- *   2. Value is a bare digit string (e.g. "245" from "G245S" misparse)
- *   3. Confidence is not "high" — rule engine is uncertain; AI gets a second opinion
+ *
+ * Known biomarkers (isFallback=false):
+ *   AI runs only when the rule engine found NOTHING (ruleResult === null).
+ *   This handles unseen clinical report formats for known markers like PSA,
+ *   HER2, EGFR etc. where the regex didn't match but the biomarker is present.
+ *   We never second-guess a high-confidence rule extraction for known markers.
+ *
+ * Unknown biomarkers (isFallback=true):
+ *   More aggressive — also fires for bare-digit results and medium/low confidence,
+ *   since the generic fallback patterns are less specific than named patterns.
  */
 export function shouldEnrich(
   ruleResult: BiomarkerExtractionResult | null,
   isFallback: boolean
 ): boolean {
-  if (!isFallback) return false;
+  // Known biomarker: only enrich when regex found absolutely nothing.
+  if (!isFallback) return ruleResult === null;
+
+  // Unknown biomarker (fallback pattern): enrich when null, uncertain, or suspicious.
   if (ruleResult === null) return true;
   // Bare number with no letters, no unit — likely the fallback numeric pattern
   // captured a digit from inside an alphanumeric mutation code (e.g. G245S → 245).

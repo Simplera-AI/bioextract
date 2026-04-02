@@ -15,7 +15,7 @@ import ExtractionProgress from "@/components/ExtractionProgress";
 import ResultsPreview from "@/components/ResultsPreview";
 import BioExtractDownloadButtons from "@/components/BioExtractDownloadButtons";
 
-import { runBiomarkerExtraction, runBiomarkerExtractionAsync } from "@/lib/extractBiomarker";
+import { runMultiBiomarkerExtraction, runMultiBiomarkerExtractionAsync } from "@/lib/extractBiomarker";
 import { findAllMentions } from "@/lib/textNormalize";
 import { getBiomarkerPattern } from "@/lib/biomarkerPatterns";
 import type {
@@ -149,6 +149,8 @@ export default function HomePage() {
   }, []);
 
   // ── Step 4: Run extraction ────────────────────────────────────────────
+  const [currentBiomarkerLabel, setCurrentBiomarkerLabel] = useState<string>("");
+
   const handleRunExtraction = useCallback(() => {
     const { sheetData, selectedColumn, biomarkerQuery } = state;
     if (!sheetData || !selectedColumn || !biomarkerQuery.trim()) return;
@@ -163,6 +165,7 @@ export default function HomePage() {
       progress: { processed: 0, total, percent: 0, phase: "scanning", aiProcessed: 0, aiTotal: 0 },
       extractionError: null,
     }));
+    setCurrentBiomarkerLabel("");
 
     // Use setTimeout to allow React to re-render the progress UI before extraction starts
     const aiEnabled = process.env.NEXT_PUBLIC_AI_ENRICHMENT === "true";
@@ -171,9 +174,13 @@ export default function HomePage() {
         setState((s) => ({ ...s, progress: update }));
       };
 
+      const onBiomarkerStart = (name: string, index: number, total: number) => {
+        setCurrentBiomarkerLabel(total > 1 ? `Extracting ${index + 1}/${total}: ${name}` : "");
+      };
+
       const run: Promise<ExtractionOutput> = aiEnabled
-        ? runBiomarkerExtractionAsync(rows, sheetData.headers, selectedColumn, biomarkerQuery.trim(), onProgress)
-        : Promise.resolve(runBiomarkerExtraction(rows, sheetData.headers, selectedColumn, biomarkerQuery.trim(), onProgress));
+        ? runMultiBiomarkerExtractionAsync(rows, sheetData.headers, selectedColumn, biomarkerQuery.trim(), onProgress, onBiomarkerStart)
+        : Promise.resolve(runMultiBiomarkerExtraction(rows, sheetData.headers, selectedColumn, biomarkerQuery.trim(), onProgress, onBiomarkerStart));
 
       run.then((output) => {
         setState((s) => ({
@@ -182,6 +189,7 @@ export default function HomePage() {
           output,
           activeStep: 5,
         }));
+        setCurrentBiomarkerLabel("");
       }).catch((err) => {
         setState((s) => ({
           ...s,
@@ -360,7 +368,7 @@ export default function HomePage() {
                 ) : (
                   <ExtractionProgress
                     progress={progress}
-                    biomarkerName={biomarkerQuery}
+                    biomarkerName={currentBiomarkerLabel || biomarkerQuery}
                   />
                 )}
               </StepWrapper>

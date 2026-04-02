@@ -90,9 +90,10 @@ describe.skipIf(skip)("AI Enrichment — real prompt validation", () => {
       enrichPrompt("TP53", "Patient is scheduled for routine follow-up next month.")
     );
     const cleaned = raw.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/, "").trim();
-    const parsed = JSON.parse(cleaned) as { value: string };
-    // Model should say "not found" or similar — value should not be a clinical result
-    expect(parsed.value.toLowerCase()).toMatch(/not found|n\/a|none|no value|unavailable/i);
+    const parsed = JSON.parse(cleaned) as { value: string | null };
+    // Model should say "not found" or similar, or return null — value should not be a clinical result
+    const val = (parsed.value ?? "not found").toLowerCase();
+    expect(val).toMatch(/not found|n\/a|none|no value|unavailable/i);
   }, 10_000);
 
   it("extracts numeric value with units for unknown lab marker", async () => {

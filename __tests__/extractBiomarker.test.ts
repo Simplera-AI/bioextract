@@ -9,7 +9,7 @@ import { describe, it, expect } from "vitest";
 import { normalizeForExtraction, convertWordNumbers } from "../lib/textNormalize";
 import { findAllMentions } from "../lib/textNormalize";
 import { getBiomarkerPattern, buildFallbackPattern } from "../lib/biomarkerPatterns";
-import { extractBiomarker, runBiomarkerExtraction } from "../lib/extractBiomarker";
+import { extractBiomarker, runBiomarkerExtraction, runMultiBiomarkerExtraction, parseBiomarkerQuery } from "../lib/extractBiomarker";
 
 // ─── Normalization Tests ──────────────────────────────────────────────────
 
@@ -998,5 +998,62 @@ describe("shouldEnrich", () => {
   it("returns true for medium-confidence fallback result", () => {
     const result = { value: "positive", valueType: "categorical" as const, evidence: "", matchedAlias: "afp", confidence: "medium" as const };
     expect(shouldEnrich(result, true)).toBe(true);
+  });
+});
+
+// ─── parseBiomarkerQuery ──────────────────────────────────────────────────────
+
+describe("parseBiomarkerQuery", () => {
+  it("single biomarker returns one-element array", () => {
+    expect(parseBiomarkerQuery("PSA")).toEqual(["PSA"]);
+  });
+
+  it("comma-separated list returns trimmed array", () => {
+    expect(parseBiomarkerQuery("PSA, HER2, EGFR")).toEqual(["PSA", "HER2", "EGFR"]);
+  });
+
+  it("filters empty entries from trailing commas", () => {
+    expect(parseBiomarkerQuery("PSA, , HER2,")).toEqual(["PSA", "HER2"]);
+  });
+
+  it("handles no commas as single biomarker", () => {
+    expect(parseBiomarkerQuery("Ki-67")).toEqual(["Ki-67"]);
+  });
+});
+
+// ─── runMultiBiomarkerExtraction ─────────────────────────────────────────────
+
+describe("runMultiBiomarkerExtraction", () => {
+  const headers = ["ID", "Notes"];
+  const rows = [
+    { ID: "1", Notes: "PSA 4.2 ng/mL. HER2 positive." },
+    { ID: "2", Notes: "HER2 3+. PSA undetectable." },
+    { ID: "3", Notes: "EGFR exon 19 deletion confirmed." },
+  ];
+
+  it("single biomarker: produces 3 new columns (Value, Evidence, Confidence)", () => {
+    const out = runMultiBiomarkerExtraction(rows, headers, "Notes", "PSA");
+    expect(out.headersOut).toContain("PSA Value");
+    expect(out.headersOut).toContain("PSA Evidence");
+    expect(out.headersOut).toContain("PSA Confidence");
+    expect(out.headersOut).not.toContain("HER2 Value");
+  });
+
+  it("multi-biomarker: all biomarker columns present in output", () => {
+    const out = runMultiBiomarkerExtraction(rows, headers, "Notes", "PSA, HER2");
+    expect(out.headersOut).toContain("PSA Value");
+    expect(out.headersOut).toContain("PSA Confidence");
+    expect(out.headersOut).toContain("HER2 Value");
+    expect(out.headersOut).toContain("HER2 Confidence");
+  });
+
+  it("multi-biomarker: stats.biomarkerName uses first+Nmore suffix", () => {
+    const out = runMultiBiomarkerExtraction(rows, headers, "Notes", "PSA, HER2, EGFR");
+    expect(out.stats.biomarkerName).toBe("PSA+2more");
+  });
+
+  it("multi-biomarker: rowsOut length unchanged", () => {
+    const out = runMultiBiomarkerExtraction(rows, headers, "Notes", "PSA, HER2");
+    expect(out.rowsOut).toHaveLength(3);
   });
 });

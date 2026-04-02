@@ -962,3 +962,147 @@ export async function runBiomarkerExtractionAsync(
 
   return { headersOut, rowsOut, stats };
 }
+
+// ─── Multi-biomarker extraction ──────────────────────────────────────────────
+
+/**
+ * Parse a comma-separated biomarker query into individual trimmed names.
+ * e.g. "PSA, HER2, EGFR" → ["PSA", "HER2", "EGFR"]
+ */
+export function parseBiomarkerQuery(query: string): string[] {
+  return query
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * Extract multiple biomarkers from a dataset in a single run.
+ * Runs each biomarker extraction sequentially, merging columns into one output.
+ *
+ * For a single biomarker, delegates to runBiomarkerExtraction (identical behaviour).
+ * For multiple biomarkers, appends [Name] Value + [Name] Evidence + [Name] Confidence
+ * for each biomarker onto the original headers.
+ *
+ * @param onBiomarkerStart  Called when each biomarker extraction begins (for progress UI)
+ */
+export function runMultiBiomarkerExtraction(
+  rows: Record<string, string>[],
+  originalHeaders: string[],
+  selectedColumn: string,
+  biomarkerQuery: string,
+  onProgress?: (update: ExtractionProgress) => void,
+  onBiomarkerStart?: (name: string, index: number, total: number) => void
+): ExtractionOutput {
+  const biomarkers = parseBiomarkerQuery(biomarkerQuery);
+  if (biomarkers.length <= 1) {
+    return runBiomarkerExtraction(rows, originalHeaders, selectedColumn, biomarkerQuery, onProgress);
+  }
+
+  const startTime = Date.now();
+  let currentRows = rows;
+  let currentHeaders = originalHeaders;
+  let totalFound = 0;
+  let totalNotFound = 0;
+  let totalPending = 0;
+
+  for (let bi = 0; bi < biomarkers.length; bi++) {
+    const bm = biomarkers[bi];
+    onBiomarkerStart?.(bm, bi, biomarkers.length);
+
+    const subOutput = runBiomarkerExtraction(
+      currentRows,
+      currentHeaders,
+      selectedColumn,
+      bm,
+      bi === 0 ? onProgress : undefined
+    );
+
+    currentHeaders = subOutput.headersOut;
+    currentRows = subOutput.rowsOut;
+    totalFound += subOutput.stats.foundCount;
+    totalNotFound += subOutput.stats.notFoundCount;
+    totalPending += subOutput.stats.pendingCount;
+  }
+
+  const firstName = biomarkers[0];
+  const nameSuffix = biomarkers.length > 1 ? `${firstName}+${biomarkers.length - 1}more` : firstName;
+
+  return {
+    headersOut: currentHeaders,
+    rowsOut: currentRows,
+    stats: {
+      totalRows: rows.length,
+      foundCount: totalFound,
+      notFoundCount: totalNotFound,
+      pendingCount: totalPending,
+      biomarkerName: nameSuffix,
+      column: selectedColumn,
+      durationMs: Date.now() - startTime,
+    },
+  };
+}
+
+/**
+ * Async multi-biomarker extraction — runs each biomarker through the full
+ * async pipeline (AI enrichment + validation) sequentially.
+ */
+export async function runMultiBiomarkerExtractionAsync(
+  rows: Record<string, string>[],
+  originalHeaders: string[],
+  selectedColumn: string,
+  biomarkerQuery: string,
+  onProgress?: (update: ExtractionProgress) => void,
+  onBiomarkerStart?: (name: string, index: number, total: number) => void
+): Promise<ExtractionOutput> {
+  const biomarkers = parseBiomarkerQuery(biomarkerQuery);
+  if (biomarkers.length <= 1) {
+    return runBiomarkerExtractionAsync(rows, originalHeaders, selectedColumn, biomarkerQuery, onProgress);
+  }
+
+  const startTime = Date.now();
+  let currentRows = rows;
+  let currentHeaders = originalHeaders;
+  let totalFound = 0;
+  let totalNotFound = 0;
+  let totalPending = 0;
+  let totalAiEnriched = 0;
+
+  for (let bi = 0; bi < biomarkers.length; bi++) {
+    const bm = biomarkers[bi];
+    onBiomarkerStart?.(bm, bi, biomarkers.length);
+
+    const subOutput = await runBiomarkerExtractionAsync(
+      currentRows,
+      currentHeaders,
+      selectedColumn,
+      bm,
+      bi === 0 ? onProgress : undefined
+    );
+
+    currentHeaders = subOutput.headersOut;
+    currentRows = subOutput.rowsOut;
+    totalFound += subOutput.stats.foundCount;
+    totalNotFound += subOutput.stats.notFoundCount;
+    totalPending += subOutput.stats.pendingCount;
+    totalAiEnriched += subOutput.stats.aiEnrichedCount ?? 0;
+  }
+
+  const firstName = biomarkers[0];
+  const nameSuffix = biomarkers.length > 1 ? `${firstName}+${biomarkers.length - 1}more` : firstName;
+
+  return {
+    headersOut: currentHeaders,
+    rowsOut: currentRows,
+    stats: {
+      totalRows: rows.length,
+      foundCount: totalFound,
+      notFoundCount: totalNotFound,
+      pendingCount: totalPending,
+      biomarkerName: nameSuffix,
+      column: selectedColumn,
+      durationMs: Date.now() - startTime,
+      aiEnrichedCount: totalAiEnriched,
+    },
+  };
+}

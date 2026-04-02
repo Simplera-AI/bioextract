@@ -64,7 +64,7 @@ export function isTNMQuery(query: string): boolean {
  * Suffixes for M: a-d (organ-specific sub-categories, e.g. M1a lung, M1b bone)
  */
 const COMPACT_TNM_RE =
-  /\b([ycra]?(?:yp|rp)?p?[cC]?[tT][0-4x][a-d]?(?:is|mi)?)\s*([ycra]?p?[nN][0-3x][a-c]?(?:mi)?)\s*([ycra]?p?[mM][01x][a-d]?)\b/i;
+  /\b([ycra]?(?:yp|rp)?p?[cC]?[tT](?:[0-4x][a-d]?(?:is|mi)?|is))\s*([ycra]?p?[nN][0-3x][a-c]?(?:mi)?)\s*([ycra]?p?[mM][01x][a-d]?)\b/i;
 
 /**
  * T-category labeled field.
@@ -82,7 +82,7 @@ const COMPACT_TNM_RE =
  * colon/dash separator.
  */
 const LABELED_T_RE =
-  /(?:\(T\)\s*:|(?<![a-zA-Z])T(?:\s+\w+)?\s*[-:–])\s*([ycra]?(?:yp|rp)?p?[cC]?[tT][0-4x][a-d]?(?:is|mi)?)\b/i;
+  /(?:\(T\)\s*:|(?<![a-zA-Z])T(?:\s+\w+)?\s*[-:–])\s*([ycra]?(?:yp|rp)?p?[cC]?[tT](?:[0-4x][a-d]?(?:is|mi)?|is))\b/i;
 
 /**
  * N-category labeled field.
@@ -101,9 +101,14 @@ const LABELED_M_RE =
 /**
  * Stage Group: "AJCC Stage IIB", "Stage IIIA", "Overall stage: II", "stage group 2A"
  * Handles Roman numeral (I–IV) and digit (1–4) forms, with optional A/B/C suffix.
+ *
+ * Also handles pathologic-prefixed values like "pStage IIA" (common in AJCC report format):
+ *   "Pathologic Stage Group:      pStage IIA"
+ * The optional `(?:[ycra]?p?[Ss]tage\s+)?` skips over the "pStage " / "Stage " label
+ * that some reports embed in the value field itself.
  */
 const STAGE_GROUP_RE =
-  /\b(?:ajcc\s+)?(?:overall\s+|final\s+|pathologic(?:al)?\s+|clinical\s+)?(?:stage\s*group\s*[:\-]?\s*|stage\s*[:\-]?\s*)([ivIV]{1,4}[abcABC]?|\d[abcABC]?)\b/i;
+  /\b(?:ajcc\s+)?(?:overall\s+|final\s+|pathologic(?:al)?\s+|clinical\s+)?(?:stage\s*group\s*[:\-]?\s*|stage\s*[:\-]?\s*)(?:[ycra]?p?\s*[Ss]tage\s+)?([ivIV]{1,4}[abcABC]?|\d[abcABC]?)\b/i;
 
 // ─── Presence Gate ─────────────────────────────────────────────────────────
 
@@ -112,7 +117,7 @@ const STAGE_GROUP_RE =
  * Avoids running the full TNM extraction pipeline on unrelated cell text.
  */
 const STAGING_GATE_RE =
-  /\b(?:staging|stage|tnm|patholog\w*|clinical\s+stage|[ycra]?(?:yp|rp)?p?[cC]?[tT][0-4x])\b/i;
+  /\b(?:staging|stage|tnm|patholog\w*|clinical\s+stage|[ycra]?(?:yp|rp)?p?[cC]?[tT](?:[0-4x]|is))\b/i;
 
 // ─── Normalise captured component to canonical form ────────────────────────
 

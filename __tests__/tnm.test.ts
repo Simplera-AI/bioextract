@@ -543,3 +543,111 @@ describe("Regression — 12 pre-fix failing cases", () => {
     expect(r!.M).toMatch(/M0/i);
   });
 });
+
+// ─── REGRESSION: pStage prefix in Stage Group value ──────────────────────────
+// Real AJCC reports often write "Pathologic Stage Group: pStage IIA" where the
+// value itself carries a pathologic prefix.  The old STAGE_GROUP_RE captured
+// roman-numerals/digits directly after the label colon and failed when "pStage"
+// appeared between the colon and the numeral.
+
+describe("Regression — pStage prefix in Stage Group value", () => {
+  const makeAJCCBlock = (stageValue: string, T = "T1b", N = "N2", M = "M0") => [
+    "PATHOLOGIC STAGING (AJCC Cancer Staging Manual, 8th Edition)",
+    "─────────────────────────────────────────────────",
+    `  Primary Tumor (T):           ${T}`,
+    `  Regional Lymph Nodes (N):    ${N}`,
+    `  Distant Metastasis (M):      ${M}`,
+    `  Pathologic Stage Group:      ${stageValue}`,
+    "─────────────────────────────────────────────────",
+  ].join("\n");
+
+  it("pStage IIA → Stage IIA", () => {
+    const r = extractTNMFields(makeAJCCBlock("pStage IIA"));
+    expect(r).not.toBeNull();
+    expect(r!.stageGroup).toMatch(/IIA/i);
+  });
+
+  it("pStage IV → Stage IV", () => {
+    const r = extractTNMFields(makeAJCCBlock("pStage IV", "T2", "N1b", "M1c"));
+    expect(r).not.toBeNull();
+    expect(r!.stageGroup).toMatch(/IV/i);
+  });
+
+  it("pStage IIIB → Stage IIIB", () => {
+    const r = extractTNMFields(makeAJCCBlock("pStage IIIB", "T3", "N2", "M0"));
+    expect(r).not.toBeNull();
+    expect(r!.stageGroup).toMatch(/IIIB/i);
+  });
+
+  it("plain Stage IIA still works (no p prefix)", () => {
+    const r = extractTNMFields(makeAJCCBlock("Stage IIA"));
+    expect(r).not.toBeNull();
+    expect(r!.stageGroup).toMatch(/IIA/i);
+  });
+
+  it("T, N, M also extracted alongside pStage group", () => {
+    const r = extractTNMFields(makeAJCCBlock("pStage IIA", "T1b", "N2", "M0"));
+    expect(r).not.toBeNull();
+    expect(r!.T).toMatch(/T1B/i);
+    expect(r!.N).toMatch(/N2/i);
+    expect(r!.M).toMatch(/M0/i);
+    expect(r!.stageGroup).toMatch(/IIA/i);
+  });
+});
+
+// ─── REGRESSION: Tis (carcinoma in situ) T-category extraction ───────────────
+// "Tis" is a valid AJCC T-category (tumor in situ).  The old T pattern used
+// [tT][0-4x] which required a digit or 'x' immediately after T, so standalone
+// "Tis" (without a preceding digit) was silently dropped.
+
+describe("Regression — Tis (carcinoma in situ) extraction", () => {
+  const makeAJCCBlockTis = (T = "Tis", N = "N0", M = "M0", stage = "pStage 0") => [
+    "PATHOLOGIC STAGING (AJCC Cancer Staging Manual, 8th Edition)",
+    "─────────────────────────────────────────────────",
+    `  Primary Tumor (T):           ${T}`,
+    `  Regional Lymph Nodes (N):    ${N}`,
+    `  Distant Metastasis (M):      ${M}`,
+    `  Pathologic Stage Group:      ${stage}`,
+    "─────────────────────────────────────────────────",
+  ].join("\n");
+
+  it("Primary Tumor (T): Tis → T extracted as TIS", () => {
+    const r = extractTNMFields(makeAJCCBlockTis());
+    expect(r).not.toBeNull();
+    expect(r!.T).toMatch(/TIS/i);
+  });
+
+  it("pTis — pathologic prefix", () => {
+    const r = extractTNMFields(makeAJCCBlockTis("pTis"));
+    expect(r).not.toBeNull();
+    expect(r!.T).toMatch(/PTIS/i);
+  });
+
+  it("Tis with N2a and M1 — N and M also extracted", () => {
+    const r = extractTNMFields(makeAJCCBlockTis("Tis", "N2a", "M1", "pStage IV"));
+    expect(r).not.toBeNull();
+    expect(r!.T).toMatch(/TIS/i);
+    expect(r!.N).toMatch(/N2A/i);
+    expect(r!.M).toMatch(/M1/i);
+  });
+
+  it("Tis N0 M0 in compact-like labeled format", () => {
+    const text = [
+      "Pathologic staging:",
+      "  Primary Tumor (T):  Tis",
+      "  Regional Lymph Nodes (N):  N0",
+      "  Distant Metastasis (M):  M0",
+    ].join("\n");
+    const r = extractTNMFields(text);
+    expect(r).not.toBeNull();
+    expect(r!.T).toMatch(/TIS/i);
+    expect(r!.N).toMatch(/N0/i);
+    expect(r!.M).toMatch(/M0/i);
+  });
+
+  it("existing T1is still extracted (digit before 'is')", () => {
+    const r = extractTNMFields("TNM staging: pT1isN0M0 confirmed.");
+    expect(r).not.toBeNull();
+    expect(r!.T).toMatch(/PT1IS/i);
+  });
+});

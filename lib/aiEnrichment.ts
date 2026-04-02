@@ -139,5 +139,31 @@ export async function enrichWithAI(
     aiEnriched: true,
   };
 
+  // Feature 5: Log high-confidence AI enrichment for known biomarkers to localStorage.
+  // This is a silent, non-blocking foundation for future automatic pattern promotion.
+  if (!isFallback && aiData.confidence === "high") {
+    logAIPattern(biomarkerName, rawText.slice(0, 200), aiData.value);
+  }
+
   return { result: enriched, aiEnriched: true };
+}
+
+/**
+ * Log a high-confidence AI enrichment result to localStorage under key
+ * 'bioextract_ai_patterns'. Stores the last 500 entries. Never throws.
+ * Browser-only: silently no-ops in server/test environments.
+ */
+function logAIPattern(biomarkerName: string, context: string, value: string): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    const raw = localStorage.getItem("bioextract_ai_patterns");
+    const entries: { biomarker: string; context: string; timestamp: number; value: string }[] =
+      raw ? (JSON.parse(raw) as typeof entries) : [];
+    entries.push({ biomarker: biomarkerName, context, timestamp: Date.now(), value });
+    // Keep only the most recent 500 entries
+    const trimmed = entries.length > 500 ? entries.slice(entries.length - 500) : entries;
+    localStorage.setItem("bioextract_ai_patterns", JSON.stringify(trimmed));
+  } catch {
+    // localStorage unavailable (private browsing, storage full, SSR) — fail silently
+  }
 }

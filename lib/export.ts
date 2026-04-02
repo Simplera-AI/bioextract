@@ -1,5 +1,5 @@
 import Papa from "papaparse";
-import { TNM_VALUE_COLS, TNM_EVIDENCE_COLS } from "./extractTNM";
+import { TNM_VALUE_COLS, TNM_EVIDENCE_COLS, TNM_CONFIDENCE_COL } from "./extractTNM";
 
 function triggerDownload(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
@@ -73,6 +73,20 @@ const ROW_FOUND_STYLE = {
   fill: { patternType: "solid", fgColor: { rgb: "F0FDFA" } }, // teal-50 for other cells
 };
 
+// Confidence column styles
+const CONFIDENCE_HIGH_STYLE = {
+  fill: { patternType: "solid", fgColor: { rgb: "DCFCE7" } }, // green-100
+  font: { color: { rgb: "15803D" } },                          // green-700
+};
+const CONFIDENCE_AI_STYLE = {
+  fill: { patternType: "solid", fgColor: { rgb: "DBEAFE" } }, // blue-100
+  font: { color: { rgb: "1D4ED8" } },                          // blue-700
+};
+const CONFIDENCE_LOW_STYLE = {
+  fill: { patternType: "solid", fgColor: { rgb: "FEF9C3" } }, // yellow-100
+  font: { color: { rgb: "A16207" } },                          // yellow-700
+};
+
 // ─── Excel Export ─────────────────────────────────────────────────────────
 
 /**
@@ -99,12 +113,14 @@ export async function exportBiomarkerXlsx(
   // the output includes the standard TNM column set instead of a single Value/Evidence pair.
   const isTNMExport = TNM_VALUE_COLS.some((col) => headersOut.includes(col));
 
-  // For standard exports: single value/evidence column pair.
-  // For TNM exports:      four value columns + four evidence columns.
+  // For standard exports: single value/evidence/confidence column triple.
+  // For TNM exports:      four value columns + four evidence columns + confidence.
   const valueCol = isTNMExport ? "" : `${biomarkerName} Value`;
   const evidenceCol = isTNMExport ? "" : `${biomarkerName} Evidence`;
+  const confidenceColName = isTNMExport ? TNM_CONFIDENCE_COL : `${biomarkerName} Confidence`;
   const valueColIdx = isTNMExport ? -1 : headersOut.indexOf(valueCol);
   const evidenceColIdx = isTNMExport ? -1 : headersOut.indexOf(evidenceCol);
+  const confidenceColIdx = headersOut.indexOf(confidenceColName);
 
   // Index sets for TNM column styling (resolved once, reused per data row)
   const tnmValueIdxs = isTNMExport
@@ -154,7 +170,14 @@ export async function exportBiomarkerXlsx(
         if (!ws[ref]) {
           ws[ref] = { v: "", t: "s" };
         }
-        if (isTNMExport) {
+        // Confidence column: always style by value regardless of TNM mode
+        if (c === confidenceColIdx) {
+          const confVal = String(aoa[r][c] ?? "").trim().toLowerCase();
+          if (confVal === "high") ws[ref].s = CONFIDENCE_HIGH_STYLE;
+          else if (confVal === "ai-enriched") ws[ref].s = CONFIDENCE_AI_STYLE;
+          else if (confVal === "medium" || confVal === "low") ws[ref].s = CONFIDENCE_LOW_STYLE;
+          else ws[ref].s = ROW_FOUND_STYLE;
+        } else if (isTNMExport) {
           const cellValue = String(aoa[r][c] ?? "").trim();
           if (tnmValueIdxs.includes(c) && cellValue) {
             ws[ref].s = VALUE_FOUND_STYLE;

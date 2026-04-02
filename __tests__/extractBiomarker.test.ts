@@ -348,13 +348,14 @@ describe("runBiomarkerExtraction", () => {
     { PatientID: "005", ClinicalNotes: "PSA: negative on repeat testing." },
   ];
 
-  it("returns headersOut with two new columns appended", () => {
+  it("returns headersOut with three new columns appended (Value, Evidence, Confidence)", () => {
     const output = runBiomarkerExtraction(rows, originalHeaders, "ClinicalNotes", "PSA");
     expect(output.headersOut).toEqual([
       "PatientID",
       "ClinicalNotes",
       "PSA Value",
       "PSA Evidence",
+      "PSA Confidence",
     ]);
   });
 

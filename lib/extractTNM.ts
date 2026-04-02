@@ -286,11 +286,14 @@ export const TNM_EVIDENCE_COLS = [
   "TNM Stage Group Evidence",
 ] as const;
 
+export const TNM_CONFIDENCE_COL = "TNM Confidence" as const;
+
 export const TNM_ALL_COLS = [
   "TNM T Value",       "TNM T Evidence",
   "TNM N Value",       "TNM N Evidence",
   "TNM M Value",       "TNM M Evidence",
   "TNM Stage Group Value", "TNM Stage Group Evidence",
+  "TNM Confidence",
 ] as const;
 
 /**
@@ -303,8 +306,10 @@ export function tnmResultToRow(result: TNMResult | null): Record<string, string>
       "TNM N Value": "", "TNM N Evidence": "",
       "TNM M Value": "", "TNM M Evidence": "",
       "TNM Stage Group Value": "", "TNM Stage Group Evidence": "",
+      "TNM Confidence": "",
     };
   }
+  const confidenceLabel = result.aiEnriched ? "ai-enriched" : (result.confidence ?? "");
   return {
     "TNM T Value":              result.T           ?? "",
     "TNM T Evidence":           result.evidenceT   ?? "",
@@ -314,5 +319,6 @@ export function tnmResultToRow(result: TNMResult | null): Record<string, string>
     "TNM M Evidence":           result.evidenceM   ?? "",
     "TNM Stage Group Value":    result.stageGroup  ?? "",
     "TNM Stage Group Evidence": result.evidenceStageGroup ?? "",
+    "TNM Confidence":           confidenceLabel,
   };
 }

@@ -606,7 +606,8 @@ export function runBiomarkerExtraction(
   // ── Standard single-value path ──────────────────────────────────────────
   const valueCol = trimmedQuery + " Value";
   const evidenceCol = trimmedQuery + " Evidence";
-  const headersOut = [...originalHeaders, valueCol, evidenceCol];
+  const confidenceCol = trimmedQuery + " Confidence";
+  const headersOut = [...originalHeaders, valueCol, evidenceCol, confidenceCol];
 
   let foundCount = 0;
   let notFoundCount = 0;
@@ -620,7 +621,7 @@ export function runBiomarkerExtraction(
 
     if (!result) {
       notFoundCount++;
-      return { ...row, [valueCol]: "", [evidenceCol]: "" };
+      return { ...row, [valueCol]: "", [evidenceCol]: "", [confidenceCol]: "" };
     }
 
     if (result.valueType === "pending") pendingCount++;
@@ -630,6 +631,7 @@ export function runBiomarkerExtraction(
       ...row,
       [valueCol]: result.value,
       [evidenceCol]: result.evidence,
+      [confidenceCol]: result.aiEnriched ? "ai-enriched" : (result.confidence ?? ""),
     };
   });
 
@@ -797,7 +799,8 @@ export async function runBiomarkerExtractionAsync(
   // ── Standard single-value async path ───────────────────────────────────
   const valueCol = trimmedQuery + " Value";
   const evidenceCol = trimmedQuery + " Evidence";
-  const headersOut = [...originalHeaders, valueCol, evidenceCol];
+  const confidenceCol = trimmedQuery + " Confidence";
+  const headersOut = [...originalHeaders, valueCol, evidenceCol, confidenceCol];
 
   const isFallback = getBiomarkerPattern(trimmedQuery) === null;
 
@@ -908,14 +911,19 @@ export async function runBiomarkerExtractionAsync(
 
     if (!result) {
       notFoundCount++;
-      return { ...row, [valueCol]: "", [evidenceCol]: "" };
+      return { ...row, [valueCol]: "", [evidenceCol]: "", [confidenceCol]: "" };
     }
 
     if (result.valueType === "pending") pendingCount++;
     else foundCount++;
     if (enriched?.aiEnriched) aiEnrichedCount++;
 
-    return { ...row, [valueCol]: result.value, [evidenceCol]: result.evidence };
+    return {
+      ...row,
+      [valueCol]: result.value,
+      [evidenceCol]: result.evidence,
+      [confidenceCol]: result.aiEnriched ? "ai-enriched" : (result.confidence ?? ""),
+    };
   });
 
   const stats: ExtractionStats = {

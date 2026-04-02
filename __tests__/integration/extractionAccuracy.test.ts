@@ -281,9 +281,9 @@ describe("runBiomarkerExtraction integration", () => {
     { ID: "P005", Notes: "Chest pain workup. Troponin elevated.", Diagnosis: "Acute coronary syndrome" },
   ];
 
-  it("returns correct headersOut with 2 new columns", () => {
+  it("returns correct headersOut with 3 new columns (Value, Evidence, Confidence)", () => {
     const result = runBiomarkerExtraction(clinicalRows, ["ID", "Notes", "Diagnosis"], "Notes", "PSA");
-    expect(result.headersOut).toEqual(["ID", "Notes", "Diagnosis", "PSA Value", "PSA Evidence"]);
+    expect(result.headersOut).toEqual(["ID", "Notes", "Diagnosis", "PSA Value", "PSA Evidence", "PSA Confidence"]);
   });
 
   it("extracts PSA values from the correct rows", () => {

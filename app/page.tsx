@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Upload, Table2, Search, Zap, Download,
-  ChevronRight, RotateCcw, Moon, Sun, Microscope,
+  ChevronRight, RotateCcw, Moon, Sun, Microscope, AlertTriangle,
 } from "lucide-react";
 
 import FileUploader from "@/components/FileUploader";
@@ -16,6 +16,8 @@ import ResultsPreview from "@/components/ResultsPreview";
 import BioExtractDownloadButtons from "@/components/BioExtractDownloadButtons";
 
 import { runBiomarkerExtraction, runBiomarkerExtractionAsync } from "@/lib/extractBiomarker";
+import { findAllMentions } from "@/lib/textNormalize";
+import { getBiomarkerPattern } from "@/lib/biomarkerPatterns";
 import type {
   AppState,
   ParsedFile,
@@ -74,6 +76,33 @@ function useDarkMode() {
 export default function HomePage() {
   const [state, setState] = useState<AppState>(INITIAL_STATE);
   const { dark, toggle: toggleDark } = useDarkMode();
+
+  // ── Pre-run biomarker presence check ─────────────────────────────────────
+  // Scan the first 50 rows of the selected column for any alias of the biomarker.
+  // If none found, show a warning banner so the user can fix config before running.
+  const [mentionCount, setMentionCount] = useState<number | null>(null);
+  const mentionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const { sheetData, selectedColumn, biomarkerQuery } = state;
+    if (!sheetData || !selectedColumn || !biomarkerQuery.trim()) {
+      setMentionCount(null);
+      return;
+    }
+    if (mentionDebounceRef.current) clearTimeout(mentionDebounceRef.current);
+    mentionDebounceRef.current = setTimeout(() => {
+      const pattern = getBiomarkerPattern(biomarkerQuery.trim());
+      const aliases = pattern ? pattern.aliases : [biomarkerQuery.trim().toLowerCase()];
+      const sample = sheetData.rows.slice(0, 50);
+      let count = 0;
+      for (const row of sample) {
+        const text = (row[selectedColumn] ?? "").toLowerCase();
+        if (aliases.some(a => findAllMentions(text, a).length > 0)) count++;
+      }
+      setMentionCount(count);
+    }, 300);
+    return () => { if (mentionDebounceRef.current) clearTimeout(mentionDebounceRef.current); };
+  }, [state.biomarkerQuery, state.selectedColumn, state.sheetData]);
 
   // ── Step 1: File uploaded ─────────────────────────────────────────────
   const handleFileParsed = useCallback(
@@ -282,6 +311,15 @@ export default function HomePage() {
                     value={biomarkerQuery}
                     onChange={handleBiomarkerChange}
                   />
+                  {/* Pre-run warning: biomarker not found in sampled rows */}
+                  {mentionCount === 0 && biomarkerQuery.trim().length > 0 && selectedColumn && (
+                    <div className="flex items-start gap-2 rounded-lg border border-yellow-300 dark:border-yellow-700/50 bg-yellow-50 dark:bg-yellow-950/20 px-3 py-2.5">
+                      <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-400 shrink-0 mt-0.5" />
+                      <p className="text-xs text-yellow-700 dark:text-yellow-400">
+                        <span className="font-semibold">&ldquo;{biomarkerQuery}&rdquo;</span> was not found in the first 50 rows of &ldquo;{selectedColumn}&rdquo;. Check column selection or biomarker name.
+                      </p>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between pt-2">
                     <p className="text-xs text-gray-400 dark:text-slate-500">
                       {canRun

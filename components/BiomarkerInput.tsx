@@ -47,7 +47,7 @@ export default function BiomarkerInput({ value, onChange, disabled }: BiomarkerI
             onFocus={() => { setFocused(true); setShowSuggestions(true); }}
             onBlur={() => setFocused(false)}
             disabled={disabled}
-            placeholder="e.g. PSA, PiRADS, TNM, Ki-67, BRCA1…"
+            placeholder="e.g. PSA, HER2, EGFR or any biomarker name…"
             className={[
               "input-base pl-9 pr-10",
               focused ? "border-teal-500 ring-2 ring-teal-500/30" : "",

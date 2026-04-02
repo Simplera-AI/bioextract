@@ -734,6 +734,32 @@ function isBareNumeric(value: string): boolean {
   return /^\d+(\.\d+)?$/.test(value.trim());
 }
 
+/**
+ * Run async tasks with a maximum concurrency limit.
+ * Replaces serial for-loops AND unbounded Promise.all — 5 parallel workers
+ * is the sweet spot: maximises throughput without overwhelming Anthropic rate limits.
+ *
+ * @param tasks  Array of zero-argument async functions to execute
+ * @param limit  Maximum number of tasks running simultaneously
+ * @returns      Results in the same order as input tasks
+ */
+async function withConcurrency<T>(
+  tasks: (() => Promise<T>)[],
+  limit: number
+): Promise<T[]> {
+  if (tasks.length === 0) return [];
+  const results: T[] = new Array(tasks.length);
+  let idx = 0;
+  async function worker() {
+    while (idx < tasks.length) {
+      const i = idx++;
+      results[i] = await tasks[i]();
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+  return results;
+}
+
 export async function runBiomarkerExtractionAsync(
   rows: Record<string, string>[],
   originalHeaders: string[],
@@ -764,23 +790,22 @@ export async function runBiomarkerExtractionAsync(
         return { row, text, ruleResult, needsAI };
       });
 
-    // Phase 2: AI fill-in for rows with missing fields
+    // Phase 2: AI fill-in for rows with missing fields (5-worker concurrency)
     const aiIdxs = tnmMeta.map((m, i) => m.needsAI ? i : -1).filter(i => i >= 0);
     const aiResults = new Map<number, TNMResult | null>();
     let aiDone = 0;
     const total = rows.length;
 
-    for (let b = 0; b < aiIdxs.length; b += AI_BATCH_SIZE) {
-      await Promise.all(
-        aiIdxs.slice(b, b + AI_BATCH_SIZE).map(async idx => {
-          const partial = tnmMeta[idx].ruleResult ?? { T: null, N: null, M: null, stageGroup: null, evidenceT: "", evidenceN: "", evidenceM: "", evidenceStageGroup: "", confidence: "low" as const };
-          const enriched = await enrichTNMWithAI(tnmMeta[idx].text, partial);
-          aiResults.set(idx, enriched);
-          aiDone++;
-          onProgress?.({ processed: total, total, percent: Math.round(10 + (aiDone / aiIdxs.length) * 90), phase: "enriching", aiProcessed: aiDone, aiTotal: aiIdxs.length });
-        })
-      );
-    }
+    await withConcurrency(
+      aiIdxs.map(idx => async () => {
+        const partial = tnmMeta[idx].ruleResult ?? { T: null, N: null, M: null, stageGroup: null, evidenceT: "", evidenceN: "", evidenceM: "", evidenceStageGroup: "", confidence: "low" as const };
+        const enriched = await enrichTNMWithAI(tnmMeta[idx].text, partial);
+        aiResults.set(idx, enriched);
+        aiDone++;
+        onProgress?.({ processed: total, total, percent: Math.round(10 + (aiDone / aiIdxs.length) * 90), phase: "enriching", aiProcessed: aiDone, aiTotal: aiIdxs.length });
+      }),
+      5
+    );
 
     const rowsOut: Record<string, string>[] = tnmMeta.map(({ row, ruleResult }, idx) => {
       const final = aiResults.get(idx) ?? ruleResult;
@@ -870,31 +895,29 @@ export async function runBiomarkerExtractionAsync(
     onProgress?.({ processed: total, total, percent: Math.round(10 + (aiCompleted / aiTotal) * 90), phase: "enriching", aiProcessed: aiCompleted, aiTotal });
   }
 
-  // Enrichment sweep — runs first so validation can use the enriched result
-  for (let b = 0; b < enrichIdxs.length; b += AI_BATCH_SIZE) {
-    await Promise.all(
-      enrichIdxs.slice(b, b + AI_BATCH_SIZE).map(async idx => {
-        const enrichment = await enrichWithAI(trimmedQuery, meta[idx].text, meta[idx].ruleResult, true, biomarkerCategory);
-        enrichMap.set(idx, enrichment);
-        aiCompleted++;
-        reportAI();
-      })
-    );
-  }
+  // Enrichment sweep (5-worker concurrency) — runs first so validation can use the enriched result
+  await withConcurrency(
+    enrichIdxs.map(idx => async () => {
+      const enrichment = await enrichWithAI(trimmedQuery, meta[idx].text, meta[idx].ruleResult, isFallback, biomarkerCategory);
+      enrichMap.set(idx, enrichment);
+      aiCompleted++;
+      reportAI();
+    }),
+    5
+  );
 
-  // Validation sweep — uses post-enrichment result where available
-  for (let b = 0; b < validateIdxs.length; b += AI_BATCH_SIZE) {
-    await Promise.all(
-      validateIdxs.slice(b, b + AI_BATCH_SIZE).map(async idx => {
-        const result = enrichMap.get(idx)?.result ?? meta[idx].ruleResult;
-        if (!result) { aiCompleted++; reportAI(); return; }
-        const { valid } = await validateAttribution(trimmedQuery, result.value, meta[idx].text);
-        validMap.set(idx, valid);
-        aiCompleted++;
-        reportAI();
-      })
-    );
-  }
+  // Validation sweep (5-worker concurrency) — uses post-enrichment result where available
+  await withConcurrency(
+    validateIdxs.map(idx => async () => {
+      const result = enrichMap.get(idx)?.result ?? meta[idx].ruleResult;
+      if (!result) { aiCompleted++; reportAI(); return; }
+      const { valid } = await validateAttribution(trimmedQuery, result.value, meta[idx].text);
+      validMap.set(idx, valid);
+      aiCompleted++;
+      reportAI();
+    }),
+    5
+  );
 
   // ── Phase 3: Merge and compute stats ─────────────────────────────────────
   let foundCount = 0;
